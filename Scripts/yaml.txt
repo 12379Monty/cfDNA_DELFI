@@ -1,0 +1,20 @@
+title: "QC for Flowcell Set: 200212"
+author: "fcollin@htgmolecular.com"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output:
+  BiocStyle::html_document:
+    code_folding: hide
+    toc: true
+    fig_caption: yes
+    number_sections: yes
+    css: /Users/fcollin/Documents/Projects/_pandocFiles/pandoc3.css
+#bibliography: ../../../_bibFiles/5hmc.bib
+bibliography: /Users/fcollin/Documents/Projects/_bibFiles/bibFile.bib
+#csl: ../../../_bibFiles/acm-sig-proceedings.csl  - doest work with pandoc-siteproc
+#csl: ../../../_bibFiles/cell-numeric.csl
+csl: /Users/fcollin/Documents/Projects/_bibFiles/cell-numeric.csl
+#biblio-style: acm
+link-citations: true
+vignette: >
+ %\VignetteEncoding{UTF-8}
+ %\VignetteEngine{knitr::rmarkdown}

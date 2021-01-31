@@ -1,0 +1,7 @@
+name: "cfDNA_DELFI"
+output_dir: "."
+navbar:
+  title: cfDNA Analysis - An Examination of the DELFI Approach
+  left:
+    - text: "Home"
+      href: index.html

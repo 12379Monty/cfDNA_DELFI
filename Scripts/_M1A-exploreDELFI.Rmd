@@ -1,0 +1,3971 @@
+---
+title: "cfDNA Analysis - An Examination of the DELFI Approach"
+author: "Francois Collin"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output: 
+  BiocStyle::html_document:
+    code_folding: hide
+    toc: true
+    # does this have an effect
+    fig_caption: yes    
+    # this has no effect
+    number_sections: yes
+    css: /Users/fcollin/Documents/Projects/_pandocFiles/pandoc3.css
+bibliography: [../bib/cfDNA.bib, ../bib/bibFile.bib]
+#csl: ../../bibFiles/acm-sig-proceedings.csl  - doest work with pandoc-siteproc
+csl: ../csl/cell-numeric.csl
+#biblio-style: acm
+link-citations: true
+vignette: >
+ %\VignetteEncoding{UTF-8}
+---
+
+<!--
+<style type="text/css">
+Proteomics Data Analysis - A Case Study with a NSCLC Dataset"
+body{ /* Normal  */ 
+ font-size: 16px; 
+}
+td {  /* Table  */ 
+ font-size: 12; 
+}
+h1.title { 
+ font-size: 28px; color: DarkGreen; 
+}
+h1 { /* Header 1 */ 
+ font-size: 24px; color: DarkBlue; 
+}
+h2 { /* Header 2 */ 
+ font-size: 18px; color: DarkBlue; 
+}
+h3 { /* Header 3 */ 
+ font-size: 18px;
+ font-family: "Times New Roman", Times, serif;
+ color: DarkBlue;
+}
+code.r{ /* Code block */
+    font-size: 12px;
+}
+pre { /* Code block - determines code spacing between lines */
+    font-size: 14px;
+}
+</style>
+-->
+
+
+```{r m1a-GlobalOptions, results="hide", include=FALSE, cache=FALSE}
+knitr::opts_knit$set(stop_on_error = 2L) #really make it stop
+options(knitr.table.format = 'html')
+
+#knitr::dep_auto()
+```
+<!-- ######################################################################## -->
+
+
+```{r m1a-Prelims, include=FALSE, echo=FALSE, results='hide', message=FALSE} 
+
+ FN <- "_M1A-exploreDELFI"
+if(sum(grepl(FN, list.files()))==0) stop("Check FN")
+
+ suppressMessages(require(rmarkdown))
+ suppressMessages(require(knitr))
+ options(stringsAsFactors=F) 
+
+
+ suppressPackageStartupMessages(require(edgeR))
+
+ suppressPackageStartupMessages(require(methods))
+ suppressPackageStartupMessages(require(bookdown))
+
+ suppressPackageStartupMessages(require(data.table))
+ options(datatable.fread.datatable=F)
+
+ suppressPackageStartupMessages(require(plyr))
+ suppressPackageStartupMessages(require(dplyr))
+ suppressPackageStartupMessages(require(magrittr))
+
+ # Shotcuts for knitting and redering while in R session (Invoke interactive R from R/Scripts folder)
+ kk <- function(n='') knitr::knit2html(paste("t", n, sep=''), envir=globalenv(),
+       output=paste(FN,".html", sep=''))
+
+ rr <- function(n='') rmarkdown::render(paste("t", n, sep=''), envir=globalenv(),
+       output_file=paste(FN,".html", sep='')) ##, output_dir='Scripts')
+
+ bb <- function(n='') browseURL(paste(FN,".html", sep=''))
+
+ # The usual shotcuts
+ zz <- function(n='') source(paste("t", n, sep=''))
+
+
+ WRKDIR <- '..'
+ if(!file.exists(WRKDIR)) stop("WRKDIR ERROR", WRKDIR)
+
+ # do once
+
+ # Shotcuts for knitting and redering while in R session
+ kk <- function(n='') knitr::knit2html(paste("t", n, sep=''), envir=globalenv(),
+       output=paste('',FN,".html", sep=''))
+
+ rr <- function(n='') render(paste("t", n, sep=''), envir=globalenv(),
+       output_file=paste(FN,".html", sep=''), output_dir='Scripts')
+
+ bb <- function(n='') browseURL(paste('',FN,".html", sep=''))
+
+ # The usual shorcuts
+ zz <- function(n='') source(paste('', "t", n, sep=''))
+
+ # file rmarkdown file management options: cache, figures
+ cache_DIR <- file.path(WRKDIR, 'Scripts', 'cache/M1A/')
+ suppressMessages(dir.create(cache_DIR, recursive=T))
+ opts_chunk$set(cache.path=cache_DIR)
+
+ figures_DIR <- file.path(WRKDIR, 'Scripts', 'figures/M1A/')
+ suppressMessages(dir.create(figures_DIR, recursive=T))
+ opts_chunk$set(fig.path=figures_DIR)
+
+ #tables_DIR <- file.path(WRKDIR, 'Scripts', 'tables/M1A/')
+ #suppressMessages(dir.create(table_DIR, recursive=T))
+ #opts_chunk$set(fig.path=table_DIR)
+ 
+ # need a local copy of help_DIR
+ #help_DIR <- file.path(WRKDIR, 'help_files')
+ help_DIR <- file.path('.', 'help_files')
+ suppressMessages(dir.create(help_DIR, recursive=T))
+ 
+ temp_DIR <- file.path(WRKDIR, 'temp_files')
+ suppressMessages(dir.create(temp_DIR, recursive=T))
+
+```
+<!-- ######################################################################## -->
+
+
+*** 
+```{r m1a-utilityFns, echo=FALSE}
+ # Here we define some utility functions
+source('utilityFns.r')
+
+```
+<!-- ######################################################################## -->
+
+
+***
+
+# Synopsis 
+
+This script explores the data reported on in
+Cristiano et al. (2020) [@Cristiano:2019aa]
+These data are part of the supporting information
+available through the
+[online version of the paper](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC6774252/).
+
+<!--
+Questions of interest:
+
+* What are the primary sources of variability?
+
+* What is the relative level of biological versus technical variability
+in proteomic data?
+
+* In this particular dataset, how do various classification models
+perform in terms of cross-validated and test set performance?
+-->
+
+Some findings that stand out:
+
+TBD
+
+
+***
+
+
+# Read in data
+
+
+```{r m1a-readSampDesc, eval=T, cache=T, cache.vars=c('DD', 'DD.sampDesc.frm'),warning=F}
+
+DD <- 'Cristiano'
+
+# Sample meta data
+DD_META_FILE <- '../../Refs/Cristiano_supp/NIHMS1529141-supplement-2.xlsx'
+if(!file.exists(DD_META_FILE))
+stop("Specify DD_META_FILE")
+
+DD.metaSheets.vec <- readxl::excel_sheets(DD_META_FILE)
+
+DD.metaSheetsHdr.vec <- do.call('c', lapply(DD.metaSheets.vec,
+function(SHEET) readxl::read_xlsx(DD_META_FILE, sheet=SHEET, n_max=1)[1,1]))
+
+cat("Sheets found in", DD_META_FILE, '\n')
+names(DD.metaSheetsHdr.vec)
+
+cat("Proceed to read", names(DD.metaSheetsHdr.vec)[1],'\n')
+DD.sampDesc.frm <- as.data.frame(
+ readxl::read_xlsx(DD_META_FILE, sheet=DD.metaSheets.vec[1], skip=1))
+
+names(DD.sampDesc.frm) <- 
+sub("Patient Type", "patientType",
+sub("Sample Type", "sampleType",
+sub("Age at Diagnosis", "Age",
+sub("TNM Staging", "TMM_Staging",                            
+sub("Site of Primary Tumor", "primarySite",                  
+sub("Histopathological Diagnosis", "histoDx",            
+sub("Degree of Differentiation", "degDiff",              
+sub("Location of Metastases at Diagnosis", "metLoc",
+sub("Volume of Plasma \\(ml\\)", "plasmaVol",                  
+sub("cfDNA Extracted \\(ng/ml\\)", "cfDNA_Extracted",                
+sub("cfDNA Input \\(ng/ml\\)", "cfDNA_Input",                    
+sub("Whole Genome Fragment Profile  Analysis", "WGFP",
+sub("Targeted Fragment Profile Analysis", "TGFP",     
+sub("Targeted Mutation Analysis", "TGMT",
+names(DD.sampDesc.frm)))))))))))))))
+
+DD.sampDesc.frm$Age <- as.numeric(DD.sampDesc.frm$Age)
+DD.sampDesc.frm$plasmaVol <- as.numeric(DD.sampDesc.frm$plasmaVol)
+DD.sampDesc.frm$cfDNA_Extracted <- as.numeric(DD.sampDesc.frm$cfDNA_Extracted)
+DD.sampDesc.frm$cfDNA_Input <- as.numeric(DD.sampDesc.frm$cfDNA_Input)
+
+DD.sampDesc.frm$Group <- sapply(strsplit(DD.sampDesc.frm$patientType, 
+   split=' '), '[', 1)
+
+DD.sampDesc.frm$GroupF <- factor(DD.sampDesc.frm$Group,
+  levels=c("Healthy", setdiff(sort(unique(DD.sampDesc.frm$Group)), "Healthy")))
+
+# Order by Group, gender, age
+o.v <- with(DD.sampDesc.frm, order(GroupF, Gender, Age))
+DD.sampDesc.frm <- DD.sampDesc.frm[o.v,]
+
+saveObj(paste0(DD, '.sampDesc.frm'), 'DD.sampDesc.frm')
+
+```
+
+
+Silently get Annotation...
+
+<br/>
+
+```{r m1a-annotation, cache=F}
+# Annotation
+#################
+# kelly's colors - https://i.kinja-img.com/gawker-media/image/upload/1015680494325093012.JPG
+# https://gist.github.com/ollieglass/f6ddd781eeae1d24e391265432297538
+# KellyColors.vec <-  see web site
+# REMOVED '#F2F3F4' in first entry
+KellyColors.vec <- c(
+  "#222222", "#F3C300", "#875692", "#F38400", "#A1CAF1",
+  "#BE0032", "#C2B280", "#848482", "#008856", "#E68FAC", "#0067A5",
+  "#F99379", "#604E97", "#F6A600", "#B3446C", "#DCD300", "#882D17",
+  "#8DB600", "#654522", "#E25822", "#2B3D26"
+)
+col_vector <- KellyColors.vec
+
+
+# Group Annotation
+GroupLegend.vec <- sort(unique(DD.sampDesc.frm$Group))
+GroupCol.vec <- col_vector[1:length(GroupLegend.vec)]
+names(GroupCol.vec) <- GroupLegend.vec
+
+GroupPch.vec <- 1:length(GroupLegend.vec)
+names(GroupPch.vec) <- GroupLegend.vec
+
+# Gender Annotation
+GenderLegend.vec <- sort(unique(DD.sampDesc.frm$Gender))
+GenderCol.vec <- col_vector[1:length(GenderLegend.vec)]
+names(GenderCol.vec) <- GenderLegend.vec
+
+GenderPch.vec <- 1:length(GenderLegend.vec)
+names(GenderPch.vec) <- GenderLegend.vec
+
+# Site Annotation - DNA
+
+
+```
+
+<br/>
+
+Look at plasma attribute.
+
+
+```{r m1a-plasma-summaries, fig.cap="Plasma Summaries"}
+
+tmp <- data.frame(DD.sampDesc.frm %>% dplyr::select(plasmaVol:cfDNA_Input))
+
+knitr::kable(t(apply(tmp, 2, summary)),
+  digits=2, caption="Plasma Summaries") %>%
+ kableExtra::kable_styling(full_width = F)
+
+```
+
+<br/>
+
+
+```{r m1a-sample-counts, fig.cap="Sample Counts by Type"}
+
+knitr::kable(
+ with(DD.sampDesc.frm, table(patientType, sampleType)),
+ caption="Sample Counts") %>%
+ kableExtra::kable_styling(full_width = F)
+
+```
+
+
+```{r m1a-scatter-plasma-by-group, fig.height=6, fig.width=11, fig.cap="Plasma Characteristics", include=F, cache=T, eval=F, echo=F}
+
+ with(DD.sampDesc.frm, 
+  plot(cfDNA_Extracted, cfDNA_Input, log='xy',
+       col=GroupCol.vec[DD.sampDesc.frm$Group],
+       pch=GroupPch.vec[DD.sampDesc.frm$Group]))
+
+```
+
+<br/>
+
+```{r m1a-boxplot-plasma-by-group, fig.height=6, fig.width=11, fig.cap="Plasma Characteristics", cahce=T, cache.vars=''}
+
+
+ cfDNA_Input.lst <- with(DD.sampDesc.frm, split(cfDNA_Input, GroupF))
+
+ boxplot(cfDNA_Input.lst, log='y',
+  add = F,
+  #ylim = c(2, 9), 
+  staplewex = 0, # remove horizontal whisker lines
+  staplecol = "white", # just to be totally sure
+  outline = T, # DO NOT remove outlying points
+  whisklty = 0, # remove vertical whisker lines
+  las = 2, horizontal = F, xaxt = "n",
+  border = GroupCol.vec[names(cfDNA_Input.lst)])
+
+ abline(h=median(cfDNA_Input.lst[["Healthy"]], na.rm=T), col=GroupCol.vec["Healthy"])
+
+ title("cfDNA_Input by Group")
+
+axis(side=1, at=1:length(cfDNA_Input.lst), 
+labels=names(cfDNA_Input.lst), las=2)
+
+```
+
+<br/>
+
+
+
+# STOP HERE
+
+# References
+<div id="refs"></div>
+
+***
+# Parameter settings
+  * WRKDIR = `r WRKDIR`
+  * FN = `r FN`
+  * Scripts = Scripts
+  * RUN DATE = `r date()`
+
+```{r, echo=FALSE}
+ sessionInfo()
+```
+
+```{r, echo=FALSE}
+  knit_exit()
+```
+
+
+
+# Peek into Dataset
+
+## expression distributions - boxplots 
+
+**Note** Boxplots ignore missing values!!! These are boxplots of non-missing values...
+
+
+```{r m1a-bxp-expr, eval=TRUE, cache=TRUE, cache.vars='', fig.width=11, fig.height=8,fig.cap="Boxplot Expression - ignoring NAs"}
+
+# Split by NP
+DD.expression.mtx.lst <- lapply(split(data.frame(t(DD.expression.mtx)), DD.sampDesc.frm$NP),t)
+
+par(mfrow=c(length(DD.expression.mtx.lst),1), mar=c(1,4,2,1), oma=c(2,0,2,0))
+
+for(NPval in names(DD.expression.mtx.lst)){
+ NP.expression.mtx <- DD.expression.mtx.lst[[NPval]]
+
+ boxplot(NP.expression.mtx,
+  add = F,
+  ylim = c(2, 9), ### ylim=range(log2(qNPATisMix.dgel$counts+1))+c(0,1),
+  staplewex = 0, # remove horizontal whisker lines
+  staplecol = "white", # just to be totally sure
+  outline = F, # remove outlying points
+  whisklty = 0, # remove vertical whisker lines
+  las = 2, horizontal = F, xaxt = "n",
+  border = SiteCol.vec[DD.sampDesc.frm[colnames(NP.expression.mtx), "Site"]])
+  title(NPval)
+}
+
+  Group.vec <- DD.sampDesc.frm[colnames(NP.expression.mtx), "Group"]
+ 
+
+old_par <- par(xpd = NA)
+LL <- 0
+# ticks
+Group.ndx <- match(unique(Group.vec), Group.vec)
+axis(side = 1, tick = F, line = LL, at = Group.ndx+5, labels=unique(Group.vec))
+
+par(old_par)
+
+mtext(side=3, outer=T, cex=1.25, "Expression by NP Ignoring NAs- color is Site")
+
+legend('top', bty='n', legend=names(SiteCol.vec), 
+   text.col=SiteCol.vec, ncol=round(length(SiteCol.vec)/2))
+
+```
+
+* Distribution of expression values are different in the different NPs and in DP -
+both in mean value and dispersion
+
+<br/>
+
+Replot, imputing zero for NAs.
+
+```{r m1a-bxp-expr-zero-na, eval=TRUE, cache=TRUE, cache.vars='', fig.width=11, fig.height=8,fig.cap="Boxplot Expression - imputing NAs to Zero"}
+
+# Split by NP
+DD.expression.mtx.lst <- lapply(split(data.frame(t(DD.expression.mtx)), DD.sampDesc.frm$NP),t)
+
+par(mfrow=c(length(DD.expression.mtx.lst),1), mar=c(1,4,2,1), oma=c(2,0,2,0))
+
+for(NPval in names(DD.expression.mtx.lst)){
+ NP.expression.mtx <- DD.expression.mtx.lst[[NPval]]
+
+ boxplot(ifelse(is.na(NP.expression.mtx),0,NP.expression.mtx),
+  add = F,
+  ylim = c(0, 6), ### ylim=range(log2(qNPATisMix.dgel$counts+1))+c(0,1),
+  staplewex = 0, # remove horizontal whisker lines
+  staplecol = "white", # just to be totally sure
+  outline = F, # remove outlying points
+  whisklty = 0, # remove vertical whisker lines
+  las = 2, horizontal = F, xaxt = "n",
+  border = SiteCol.vec[DD.sampDesc.frm[colnames(NP.expression.mtx), "Site"]])
+  title(NPval)
+
+if(NPval=='DP') {
+  legend('top', bty='n', legend=names(SiteCol.vec), 
+     text.col=SiteCol.vec, ncol=round(length(SiteCol.vec)/2))
+}
+
+}
+
+  Group.vec <- DD.sampDesc.frm[colnames(NP.expression.mtx), "Group"]
+ 
+old_par <- par(xpd = NA)
+LL <- 0
+# ticks
+Group.ndx <- match(unique(Group.vec), Group.vec)
+axis(side = 1, tick = F, line = LL, at = Group.ndx+5, labels=unique(Group.vec))
+
+par(old_par)
+
+mtext(side=3, outer=T, cex=1.25, "Zero-Imputed Expression by NP - color is Site")
+
+```
+
+* Missingness is drastically different across samples, between groups and between
+sites.
+
+<br/>
+
+Plot proportion of missing values.
+
+```{r m1a-bar-expr-zero, eval=TRUE, cache=TRUE, cache.vars='', fig.width=11, fig.height=8,fig.cap="Barplot Proportion Missing Values"}
+
+# Split by NP
+DD.expression.mtx.lst <- lapply(split(data.frame(t(DD.expression.mtx)), DD.sampDesc.frm$NP),t)
+
+par(mfrow=c(length(DD.expression.mtx.lst),1), mar=c(1,4,2,1), oma=c(2,0,2,0))
+
+for(NPval in names(DD.expression.mtx.lst)){
+ NP.expression.mtx <- DD.expression.mtx.lst[[NPval]]
+  
+ NP.pMissing.vec <- colMeans(is.na(NP.expression.mtx))
+
+ bar.out <- barplot(NP.pMissing.vec,
+    col = SiteCol.vec[DD.sampDesc.frm[colnames(NP.expression.mtx), "Site"]],
+    xaxt='n')
+  title(NPval)
+ 
+  abline(h=median(NP.pMissing.vec), col='grey')
+
+if(NPval=='XXX_DP') {
+  legend('top', bty='n', legend=names(SiteCol.vec), 
+     text.col=SiteCol.vec, ncol=round(length(SiteCol.vec)/2))
+}
+
+}
+
+  Group.vec <- DD.sampDesc.frm[colnames(NP.expression.mtx), "Group"]
+ 
+old_par <- par(xpd = NA)
+LL <- 0
+# ticks
+Group.ndx <- match(unique(Group.vec), Group.vec)
+axis(side = 1, tick = F, line = LL, at = bar.out[Group.ndx+5], labels=unique(Group.vec))
+
+par(old_par)
+
+mtext(side=3, outer=T, cex=1.25, "Proportion Missing Values by NP - color is Site")
+
+```
+
+* The problem with this view of the missingness is that *all protein* groups
+are assessed for *all NPs*.  Given the the individual NPs detect slightly
+different protein groups, a baseline level of missingness is assured.
+
+
+In order to get an assessment of missingness that is NP specific,
+missingness for each NP will be assessed based in protein groups
+detected by the NPs alone.  Missingness wihtin each
+NP will be evaluated using all protein groups that are detected
+in any sample (NP specific PGs).
+
+
+```{r m1a-bar-expr-zero-np-specific, eval=TRUE, cache=TRUE, cache.vars='', fig.width=11, fig.height=8,fig.cap="Barplot Proportion Missing Values among NP Specific Protein Groups"}
+
+# Split by NP
+DD.expression.mtx.lst <- lapply(split(data.frame(t(DD.expression.mtx)), DD.sampDesc.frm$NP),t)
+
+par(mfrow=c(length(DD.expression.mtx.lst),1), mar=c(1,4,2,1), oma=c(2,0,2,0))
+
+for(NPval in names(DD.expression.mtx.lst)){
+ NP.expression.mtx <- DD.expression.mtx.lst[[NPval]]
+  
+ # Remomve missing rows
+ Keep.ndx <- which(rowSums(!is.na(NP.expression.mtx)) > 0)
+
+ NP.pMissing.vec <- colMeans(is.na(NP.expression.mtx[Keep.ndx,]))
+
+ bar.out <- barplot(NP.pMissing.vec, ylim=c(0,0.8),
+    col = SiteCol.vec[DD.sampDesc.frm[colnames(NP.expression.mtx), "Site"]],
+    xaxt='n')
+  title(paste(NPval,  "- Number PGs =", length(Keep.ndx)))
+ 
+  abline(h=median(NP.pMissing.vec), col='grey')
+
+if(NPval=='XXX_DP') {
+  legend('top', bty='n', legend=names(SiteCol.vec), 
+     text.col=SiteCol.vec, ncol=round(length(SiteCol.vec)/2))
+}
+
+}
+
+  Group.vec <- DD.sampDesc.frm[colnames(NP.expression.mtx), "Group"]
+ 
+old_par <- par(xpd = NA)
+LL <- 0
+# ticks
+Group.ndx <- match(unique(Group.vec), Group.vec)
+axis(side = 1, tick = F, line = LL, at = bar.out[Group.ndx+5], labels=unique(Group.vec))
+
+par(old_par)
+
+mtext(side=3, outer=T, cex=1.25, "Proportion Missing Values Among Detected PGs for eahc NP- color is Site")
+
+```
+<br/>
+
+
+
+## expression distributions - tabular summaries 
+
+Look at SP.003 only.
+
+```{r m1a-tableCov,echo=T, include=T, eval=T}
+
+# Split by NP
+DD.expression.mtx.lst <- lapply(split(data.frame(t(DD.expression.mtx)), DD.sampDesc.frm$NP),t)
+ 
+NPval <- 'SP.003'
+NP.expression.mtx <- DD.expression.mtx.lst[[NPval]]
+
+
+tmp <- cbind(
+  nMissing = colSums(is.na(NP.expression.mtx)),
+  pMissing = colMeans(is.na(NP.expression.mtx)),
+  t(apply(NP.expression.mtx, 2, quantile, prob = (1:3) / 4, na.rm=T))
+)
+
+tmp <- data.frame(DD.sampDesc.frm[colnames(NP.expression.mtx), 
+     c("subjectID", "Site", "Group", "NP", "age", "Gender")],
+        round(tmp,2))
+
+```
+```{r m1a-tableCov2,echo=T, eval=T}
+
+#knitr::kable(tmp, digits = 1, row.names=F) %>%
+  #kableExtra::kable_styling(full_width = F)
+
+DT::datatable(tmp, options=list(pageLength = 5))
+
+
+```
+
+## Examine missingness
+
+### By NP
+```{r m1a-missing-by-np,echo=T, include=T, eval=T, cache=T, cache.vars='',fig.height=8, fig.width=11,fig.cap="Percent Missing by NP"}
+
+# Split by NP
+NP.expression.mtx.lst <- lapply(split(data.frame(t(DD.expression.mtx)), DD.sampDesc.frm$NP),t)
+
+par(mfrow=c(2,1), mar=c(2,3,2,1), oma=c(0,0,3,0))
+pMissing.ByNP.lst <- lapply(NP.expression.mtx.lst,
+  function(NP.expression.mtx) colMeans(is.na(NP.expression.mtx)))
+
+boxplot(pMissing.ByNP.lst)
+title("*all* Protein Groups")
+
+pMissing.ByNP.lst <- lapply(NP.expression.mtx.lst,
+  function(NP.expression.mtx) 
+    {Keep.ndx <- which(rowSums(!is.na(NP.expression.mtx)) > 0)
+     colMeans(is.na(NP.expression.mtx[Keep.ndx,]))
+    })
+
+boxplot(pMissing.ByNP.lst)
+title("*NP specific* Protein Groups")
+
+mtext(side=3, outer=T, cex=1.25, "Fraction of Missing Values across Subjects")
+
+
+```
+
+### By sample
+
+```{r m1a-missing-by-subject,echo=T, include=T, eval=T, cache=T, cache.vars='',fig.height=6, fig.width=11,fig.cap="Percent Missing by Subject"}
+
+subjectID.Group.vec <- unique(DD.sampDesc.frm[, c("subjectID", "Group")])[,2]
+names(subjectID.Group.vec) <- unique(DD.sampDesc.frm[, c("subjectID", "Group")])[,1]
+
+subjectID.Site.vec <- unique(DD.sampDesc.frm[, c("subjectID", "Site")])[,2]
+names(subjectID.Site.vec) <- unique(DD.sampDesc.frm[, c("subjectID", "Site")])[,1]
+
+# Split by Subject
+subject.expression.mtx.lst <- lapply(split(data.frame(t(DD.expression.mtx)), DD.sampDesc.frm$subjectID),t)
+
+subject.pMissing.mtx <- t(sapply(subject.expression.mtx.lst,
+  function(NP.expression.mtx) colMeans(is.na(NP.expression.mtx))))
+colnames(subject.pMissing.mtx) <- sapply(strsplit(colnames(subject.pMissing.mtx),
+  split='_'), function(x) rev(x)[1])
+
+pairs(subject.pMissing.mtx[, -1],
+   lower.panel=NULL,
+  panel= function(x,y){
+   points(x, y,
+       pch=GroupPch.vec[subjectID.Group.vec[rownames(subject.pMissing.mtx)]],
+       col=SiteCol.vec[subjectID.Site.vec[rownames(subject.pMissing.mtx)]])
+  })
+mtext(side=1, outer=T, line=-3, "Fraction of Missing Values By Subject")
+
+
+```
+
+<!-- SKIP THIS
+### Missingness By NP
+
+Image fraction of samples for which protein group is missing for 0 to 5 NPs
+-->
+```{r m1a-missing-by-np-2, cache=T, cache.vars='', fig.height=6, fig.width=11, fig.cap="fraction of samples for which protein group is missing for 0 to 5 NPs", echo=F, eval=F}
+
+# Split by Subject
+subject.expression.mtx.lst <- lapply(split(data.frame(t(DD.expression.mtx)), DD.sampDesc.frm$subjectID),t)
+
+subject.nMissing.mtx <- sapply(subject.expression.mtx.lst, function(mtx)
+   rowSums(is.na(mtx[,-1])))
+
+NP.nMissing.mtx <- apply(subject.nMissing.mtx, 1, function(RR)
+   do.call('c', lapply(0:5, function(nMISS) mean(RR==nMISS))))
+# order by
+
+
+suppressPackageStartupMessages(require(gplots))
+
+Mycol <- colorpanel(1000, "blue", "red")
+heatmap.2(
+    x=NP.nMissing.mtx,
+    scale="none",
+    Rowv=F,
+    labRow=0:5,
+    #labCol=NP.sampDesc.frm$subjectID[1:100],
+    col=Mycol, trace="none", density.info="none",
+    margin=c(8,6), lhei=c(2,10),
+    lwid=c(0.1,4), #lhei=c(0.1,4)
+    key=F,
+    #ColSideColors=NPCol.vec[NP.sampDesc.frm$NP[1:100]],
+    dendrogram="none",
+    main="fraction of samples for which \nprotein group is missing for 0 to 5 NPs")
+
+```
+
+
+<br/>
+
+
+## expression distributions - densities 
+
+
+```{r m1a-dens-expr, eval=TRUE, cache=TRUE, cache.vars='', fig.width=11, fig.height=8,fig.cap="Density Expression"}
+
+# Split by NP
+DD.expression.mtx.lst <- lapply(split(data.frame(t(DD.expression.mtx)), DD.sampDesc.frm$NP),t)
+
+par(mfrow=c(2,3), mar=c(1,4,2,1), oma=c(2,0,2,0))
+
+for(NPval in names(DD.expression.mtx.lst)){
+
+ NP.expression.mtx <- DD.expression.mtx.lst[[NPval]]
+
+ NP.NAs.vec <- colSums(is.na(NP.expression.mtx))
+ NP.median.vec <- apply(NP.expression.mtx,2,median,na.rm=T)
+
+ NP.expression.mtx[is.na(NP.expression.mtx)] <- rnorm(n=sum(is.na(NP.expression.mtx)), mean=0, sd=0.5)
+ plot(density(NP.expression.mtx[, 1]),
+  col = SiteCol.vec[DD.sampDesc.frm[colnames(NP.expression.mtx)[1],"Site"]],
+  lty = 1, lwd = 2, xlim = c(-1, 8), ylim = c(0, .4), las = 2,
+  main = "", xlab = ""
+ )
+ title(paste(NPval, "- NAs IQR =", paste(quantile(NP.NAs.vec, prob=c(1,3)/4), collapse=', '),
+   '\nMedian IQR =', paste(round(quantile(NP.median.vec, prob=c(1,3)/4),2), collapse=', ')))
+
+ for (JJ in 2:ncol(NP.expression.mtx)) {
+  den <- density(NP.expression.mtx[, JJ])
+  lines(den$x, den$y,
+    col = SiteCol.vec[DD.sampDesc.frm[colnames(NP.expression.mtx)[JJ],"Site"]],
+    lwd = 2, lty = 1
+  )
+ }
+
+
+}
+
+mtext(side=3, outer=T, cex=1.25, "Expression by NP - color is Site/Class; NA coded as ~ 0 +/- 0.5")
+
+```
+
+
+<br/>
+
+Replot, excluding missing values from densities.
+
+```{r m1a-dens-expr2, eval=TRUE, cache=TRUE, cache.vars='', fig.width=11, fig.height=8,fig.cap="Density Expression"}
+
+# Split by NP
+DD.expression.mtx.lst <- lapply(split(data.frame(t(DD.expression.mtx)), DD.sampDesc.frm$NP),t)
+
+par(mfrow=c(2,3), mar=c(3,4,4,1), oma=c(2,0,2,0))
+
+for(NPval in names(DD.expression.mtx.lst)){
+ NP.expression.mtx <- DD.expression.mtx.lst[[NPval]]
+
+ NP.NAs.vec <- colSums(is.na(NP.expression.mtx))
+ NP.median.vec <- apply(NP.expression.mtx,2,median,na.rm=T)
+
+ plot(density(setdiff(NP.expression.mtx[, 1], NA)),
+  col = SiteCol.vec[DD.sampDesc.frm[colnames(NP.expression.mtx)[1],"Site"]],
+  lty = 1, lwd = 2, xlim = c(1, 12), ylim = c(0, .4), las = 2,
+  main = "", xlab = ""
+ )
+ title(paste(NPval, "- NAs IQR =", paste(quantile(NP.NAs.vec, prob=c(1,3)/4), collapse=', '),
+   '\nMedian IQR =', paste(round(quantile(NP.median.vec, prob=c(1,3)/4),2), collapse=', ')))
+
+ for (JJ in 2:ncol(NP.expression.mtx)) {
+  den <- density(setdiff(NP.expression.mtx[, JJ], NA))
+  lines(den$x, den$y,
+    col = SiteCol.vec[DD.sampDesc.frm[colnames(NP.expression.mtx)[JJ],"Site"]],
+    lwd = 2, lty = 1
+  )
+ }
+
+}
+
+mtext(side=3, outer=T, cex=1.25, "Expression by NP - color is Site/Class")
+
+
+```
+
+<br/>
+
+
+# Examine Protein Group Overlap 
+
+Before pooling, we will examine the overlap in detected protein groups 
+across NPs.  As this will vary between samples, we will pick a 
+selection of samples that have different rates of missing data.
+
+## remove proteins detected in depleted plasma  
+
+Before normalizing and exmining overlap, 
+we will remove the proteins detected in depleted plasma.
+
+```{r m1a-pd-detected, cache=T, cache.vars=c('DP.expression.mtx', 'NP.expression.mtx', 'NP.sampDesc.frm', 'DP.detectedCount.vec', 'DP.medianCount.vec','DP.sampDesc.frm'),fig.height=6, fig.width=11, fig.cap="Proteins Detected in Depleted Plasma"}
+
+# Depleted plasma expresssion
+DP.expression.mtx <- DD.expression.mtx[,which(DD.sampDesc.frm$NP == 'DP')]
+DP.sampDesc.frm <- DD.sampDesc.frm[which(DD.sampDesc.frm$NP == 'DP'),]
+
+# NP expression
+NP.expression.mtx <- DD.expression.mtx[,which(DD.sampDesc.frm$NP != 'DP')]
+NP.sampDesc.frm <- DD.sampDesc.frm[which(DD.sampDesc.frm$NP != 'DP'),]
+
+DP.detectedCount.vec <- rowSums(!is.na(DP.expression.mtx))
+
+DP.medianCount.vec <-  apply(DP.expression.mtx, 1, median, na.rm=T)
+
+plot(x=DP.detectedCount.vec, xlab='Detected No. Samples',
+    y=DP.medianCount.vec, ylab="Median intensity")
+
+
+knitr::kable(
+ table(DP.detectedCount.vec)[1:11],
+  caption=paste("Protein Freq by DP detected (nDP =",
+   ncol(DP.expression.mtx),')'))  %>%
+ kableExtra::kable_styling(full_width = F)
+
+
+```
+
+* No clear outliers here - we will remove protein groups detected in more than 5
+DP samples.
+This removes `r round(100*mean(DP.detectedCount.vec > 5),1)`% of the protein groups.
+Leaving us with `r sum(DP.detectedCount.vec <= 5)` protein groups after filtering.
+
+
+```{r m1a-remove-pd-detected, cache=T, cache.vars=c('NP.expression.mtx', 'NP.proteins.frm','DP.protGroup.vec','DPdetect.NP.expression.mtx')}
+
+DP.detected.ndx <- which(DP.detectedCount.vec > 5)
+cat("Removing", length(DP.detected.ndx), "protein groups detected in DP from NP.expression.mtx.\n")
+
+DP.protGroup.vec <- rownames(NP.expression.mtx)[DP.detected.ndx]
+
+cat("Saving", length(DP.detected.ndx), "protein groups detected in DP to disk -",
+ paste0(DD, '.DP.protGroup.vec'),".\n")
+saveObj(paste0(DD, '.DP.protGroup.vec'), 'DP.protGroup.vec')
+
+# DP expression
+DP.expression.mtx <- DP.expression.mtx[DP.detected.ndx,]
+DP.proteins.frm <- DD.proteins.frm[DP.detected.ndx,, drop=F]
+
+# For DP proteins NP expression
+DPdetect.NP.expression.mtx <- NP.expression.mtx[DP.detected.ndx,]
+
+# NP expression
+NP.expression.mtx <- NP.expression.mtx[-DP.detected.ndx,]
+NP.proteins.frm <- DD.proteins.frm[-DP.detected.ndx,, drop=F]
+
+rm(DP.detected.ndx)
+
+```
+
+<br/>
+
+<!-- SKIP VENN DIAGRAMS 
+In the following venn diagrams, right column summarize the
+NP detection of protein groups **Not** detected in DP;
+left column summarizes the
+NP detection of protein groups **detected** in DP.
+The quoted DP missing rate is DP detection of the
+protein groups **detected** in DP.  Note that
+protein groups **detected** in DP means detected in > 5 samples in the
+entire dataset.
+-->
+```{r m1a-look-detection-overlap, cache=T, cache.vars='',fig.height=5, fig.width=11,fig.cap="Protein Groups Detection Overlap", eval=F}
+
+# Get data by subject
+
+# NP expression
+subjectID.NP.expression.mtx.lst <- lapply(
+   split(data.frame(t(NP.expression.mtx)), NP.sampDesc.frm$subjectID),t)
+
+# NP expression in DPdetect prots
+subjectID.DPdetect.NP.expression.mtx.lst <- lapply(
+   split(data.frame(t(DPdetect.NP.expression.mtx)), NP.sampDesc.frm$subjectID),t)
+
+# DP expression
+subjectID.DP.expression.mtx.lst <- lapply(
+   split(data.frame(t(DP.expression.mtx)), DP.sampDesc.frm$subjectID),t)
+
+subjectID.NP.missingRate.vec <- sapply(subjectID.NP.expression.mtx.lst, 
+  function(X) mean(is.na(X)))
+
+# Look at NP overlap selecting sammples across the missingRate scale
+NP.missingRate.o <- order(subjectID.NP.missingRate.vec)
+
+# Will look at overlap in NP and DP proteins separately
+
+par(mfrow=c(1, 2), mar=c(0,1,2,1), oma=c(0,0,2,0))
+
+for(JJ in 
+ seq(1, length(subjectID.NP.missingRate.vec), length.out = 6)) {
+
+ ## NP expression
+ subjectID.NP.expression.mtx <- subjectID.NP.expression.mtx.lst[[NP.missingRate.o[JJ]]]
+ subjectID.NP <- sapply(strsplit(colnames(subjectID.NP.expression.mtx),
+ split='_'),'[', 1)[1]
+ colnames(subjectID.NP.expression.mtx) <- sapply(strsplit(colnames(subjectID.NP.expression.mtx),
+ split='_'),'[', 3)
+
+ subjectID.NP.MissingRate <- mean(is.na(subjectID.NP.expression.mtx))
+ 
+ subjectID.DP.MissingRate <- mean(is.na(subjectID.DP.expression.mtx.lst[[NP.missingRate.o[JJ]]]))
+
+ ## NP expression of DTdetected prots
+ subjectID.DPdetect.NP.expression.mtx <- subjectID.DPdetect.NP.expression.mtx.lst[[NP.missingRate.o[JJ]]]
+ subjectID.DPdetect.NP <- sapply(strsplit(colnames(subjectID.DPdetect.NP.expression.mtx),
+ split='_'),'[', 1)[1]
+ colnames(subjectID.DPdetect.NP.expression.mtx) <- sapply(strsplit(colnames(subjectID.DPdetect.NP.expression.mtx),
+ split='_'),'[', 3)
+
+ subjectID.DPdetect.NP.MissingRate <- mean(is.na(subjectID.DPdetect.NP.expression.mtx))
+
+
+ # NP detection 
+ protGroupDetection.mtx <- !is.na(subjectID.NP.expression.mtx)
+
+ protGroupDetection.vC <- limma::vennCounts(protGroupDetection.mtx)
+
+ limma::vennDiagram(protGroupDetection.vC,
+         circle.col = NPCol.vec[colnames(protGroupDetection.vC)])
+
+ title(paste('NP Missing =', 
+   round(100*subjectID.NP.MissingRate,2),
+   'DP =', round(100*subjectID.DP.MissingRate,2)))
+
+ # NP detection of DPdetected prots
+ protGroupDetection.mtx <- !is.na(subjectID.DPdetect.NP.expression.mtx)
+
+ protGroupDetection.vC <- limma::vennCounts(protGroupDetection.mtx)
+
+ limma::vennDiagram(protGroupDetection.vC,
+         circle.col = NPCol.vec[colnames(protGroupDetection.vC)])
+
+ title(paste('DPdetect.NP Missing =', 
+   round(100*subjectID.DPdetect.NP.MissingRate,2)))
+
+ mtext(side=3, outer=T, cex=1.25, paste("Detection for", subjectID.NP))
+
+}#for(JJ
+
+
+```
+
+<!--
+
+* These are not great summaries - hard to see a trend in overlaps.  
+   - Might be better to examine all pairs
+
+* One thing is clear - some samples have exceedingly high rates of
+missing values and should not be analyzed along the rest of the samples
+
+* Number in lower right corner is the count of protein groups
+undetected by any of the NPs for that sample.
+
+* Note that these look at individuals.  To reduce random noise, we can pool across samples.
+
+
+<br/>
+
+Replot, pooling across samples by level of missingness, within Group = Early or Healthy
+Detection here means that the protein group is detected in any one of 10 samples
+pooled by level of missing values.
+-->
+
+```{r m1a-look-detection-overlap-pooled-early, cache=T, cache.vars='',fig.height=5, fig.width=11,fig.cap="Protein Groups Detection Overlap - Samples Pooled by Missing Level within Group",eval=F}
+
+
+getVenn.f <- function(Selected.subjectID.vec, MissingLevel) {
+# NP expression
+subjectID.NP.expression.mtx.lst <- lapply(
+   split(data.frame(t(NP.expression.mtx)), NP.sampDesc.frm$subjectID),t)
+subjectID.NP.expression.mtx.lst <- subjectID.NP.expression.mtx.lst[
+   which(names(subjectID.NP.expression.mtx.lst) %in% Selected.subjectID.vec)]
+
+# NP expression in DPdetect prots
+subjectID.DPdetect.NP.expression.mtx.lst <- lapply(
+   split(data.frame(t(DPdetect.NP.expression.mtx)), NP.sampDesc.frm$subjectID),t)
+subjectID.DPdetect.NP.expression.mtx.lst <- subjectID.DPdetect.NP.expression.mtx.lst[
+   which(names(subjectID.DPdetect.NP.expression.mtx.lst) %in% Selected.subjectID.vec)]
+
+# DP expression
+subjectID.DP.expression.mtx.lst <- lapply(
+   split(data.frame(t(DP.expression.mtx)), DP.sampDesc.frm$subjectID),t)
+subjectID.DP.expression.mtx.lst <- subjectID.DP.expression.mtx.lst[
+   which(names(subjectID.DP.expression.mtx.lst) %in% Selected.subjectID.vec)]
+
+
+subjectID.NP.missingRate.vec <- sapply(subjectID.NP.expression.mtx.lst, 
+  function(X) mean(is.na(X)))
+
+# Look at NP overlap selecting sammples across the missingRate scale
+NP.missingRate.o <- order(subjectID.NP.missingRate.vec)
+
+
+if(MissingLevel=='Low') NDX <- NP.missingRate.o[1:10] else
+if(MissingLevel=='High') NDX <- rev(NP.missingRate.o)[1:10] else
+stop("MissingLevel should be Low or High")
+
+####################################
+ ## NP detected
+ Set.NP.detected.mtx <- !is.na(subjectID.NP.expression.mtx.lst[[NDX[1]]])
+ for(JJ in 2:10)
+ Set.NP.detected.mtx <- Set.NP.detected.mtx |
+ !is.na(subjectID.NP.expression.mtx.lst[[NDX[JJ]]])
+
+ colnames(Set.NP.detected.mtx) <- sapply(strsplit(colnames(Set.NP.detected.mtx),
+ split='_'),'[', 3)
+
+ Set.NP.MissingRate <- mean(!Set.NP.detected.mtx)
+ 
+ ## DP detected
+ Set.DP.detected.mtx <- !is.na(subjectID.DP.expression.mtx.lst[[NDX[1]]])
+ for(JJ in 2:10)
+ Set.DP.detected.mtx <- Set.DP.detected.mtx |
+ !is.na(subjectID.DP.expression.mtx.lst[[NDX[JJ]]])
+
+ colnames(Set.DP.detected.mtx) <- sapply(strsplit(colnames(Set.DP.detected.mtx),
+ split='_'),'[', 3)
+
+ Set.DP.MissingRate <- mean(!Set.DP.detected.mtx)
+
+ ## DPdetect.NP detected
+ Set.DPdetect.NP.detected.mtx <- !is.na(subjectID.DPdetect.NP.expression.mtx.lst[[NDX[1]]])
+ for(JJ in 2:10)
+ Set.DPdetect.NP.detected.mtx <- Set.DPdetect.NP.detected.mtx |
+ !is.na(subjectID.DPdetect.NP.expression.mtx.lst[[NDX[JJ]]])
+
+ colnames(Set.DPdetect.NP.detected.mtx) <- sapply(strsplit(colnames(Set.DPdetect.NP.detected.mtx),
+ split='_'),'[', 3)
+
+ Set.DPdetect.NP.MissingRate <- mean(!Set.DPdetect.NP.detected.mtx)
+
+
+ # NP detection 
+ Set.NP.protGroupDetection.vC <- limma::vennCounts(Set.NP.detected.mtx)
+
+ limma::vennDiagram(Set.NP.protGroupDetection.vC,
+         circle.col = NPCol.vec[colnames(Set.NP.protGroupDetection.vC)])
+
+ title(paste('NP Missing =', 
+   round(100*Set.NP.MissingRate,2),
+   'DP =', round(100*Set.DP.MissingRate,2)))
+
+ # NP detection of DPdetected prots
+ Set.DPdetect.NP.protGroupDetection.vC <- limma::vennCounts(Set.DPdetect.NP.detected.mtx)
+
+ limma::vennDiagram(Set.DPdetect.NP.protGroupDetection.vC,
+         circle.col = NPCol.vec[colnames(Set.DPdetect.NP.protGroupDetection.vC)])
+
+ title(paste('DPdetect.NP Missing =', 
+   round(100*Set.DPdetect.NP.MissingRate,2)))
+
+}
+
+# Low missingness
+####################################
+# Get Early 
+Early.subjectID.vec <- unique(NP.sampDesc.frm[NP.sampDesc.frm$Group=='Early', 'subjectID'])
+
+par(mfrow=c(1, 2), mar=c(0,1,2,1), oma=c(0,0,2,0))
+getVenn.f(Early.subjectID.vec, "Low")
+mtext(side=3, outer=T, cex=1.25, paste("Detection for Group=Early, Missingness=Low"))
+
+par(mfrow=c(1, 2), mar=c(0,1,2,1), oma=c(0,0,2,0))
+getVenn.f(Early.subjectID.vec, "High")
+mtext(side=3, outer=T, cex=1.25, paste("Detection for Group=Early, Missingness=High"))
+
+
+####################################
+# Get Healthy 
+Healthy.subjectID.vec <- unique(NP.sampDesc.frm[NP.sampDesc.frm$Group=='Healthy', 'subjectID'])
+
+par(mfrow=c(1, 2), mar=c(0,1,2,1), oma=c(0,0,2,0))
+getVenn.f(Healthy.subjectID.vec, "Low")
+mtext(side=3, outer=T, cex=1.25, paste("Detection for Group=Healthy, Missingness=Low"))
+
+par(mfrow=c(1, 2), mar=c(0,1,2,1), oma=c(0,0,2,0))
+getVenn.f(Healthy.subjectID.vec, "High")
+mtext(side=3, outer=T, cex=1.25, paste("Detection for Group=Healthy, Missingness=High"))
+
+
+```
+
+<!--
+* Not that much more illuminating...
+-->
+
+<br/>
+
+Now look at detection overlap among NP pairs.
+
+
+```{r m1a-barplot-detection-overlap-pairs, cache=T, cache.vars='',fig.height=5, fig.width=11,fig.cap="Protein Groups Detection Overlap"}
+
+
+# Get data by subject
+
+# NP expression
+subjectID.NP.expression.mtx.lst <- lapply(
+   split(data.frame(t(NP.expression.mtx)), NP.sampDesc.frm$subjectID),t)
+
+# NP expression in DPdetect prots
+subjectID.DPdetect.NP.expression.mtx.lst <- lapply(
+   split(data.frame(t(DPdetect.NP.expression.mtx)), NP.sampDesc.frm$subjectID),t)
+
+# DP expression
+subjectID.DP.expression.mtx.lst <- lapply(
+   split(data.frame(t(DP.expression.mtx)), DP.sampDesc.frm$subjectID),t)
+
+subjectID.NP.missingRate.vec <- sapply(subjectID.NP.expression.mtx.lst, 
+  function(X) mean(is.na(X)))
+
+# Look at NP overlap selecting sammples across the missingRate scale
+NP.missingRate.o <- order(subjectID.NP.missingRate.vec)
+
+
+# Will look at overlap in NP and DP proteins separately
+###################################
+for(JJ in 
+ seq(1, length(subjectID.NP.missingRate.vec), length.out = 6)) {
+
+ ## NP expression
+ subjectID.NP.expression.mtx <- subjectID.NP.expression.mtx.lst[[NP.missingRate.o[JJ]]]
+ subjectID.NP <- sapply(strsplit(colnames(subjectID.NP.expression.mtx),
+ split='_'),'[', 1)[1]
+ colnames(subjectID.NP.expression.mtx) <- sapply(strsplit(colnames(subjectID.NP.expression.mtx),
+ split='_'),'[', 3)
+
+ subjectID.NP.MissingRate <- mean(is.na(subjectID.NP.expression.mtx))
+ 
+ subjectID.DP.MissingRate <- mean(is.na(subjectID.DP.expression.mtx.lst[[NP.missingRate.o[JJ]]]))
+
+ ## NP expression of DTdetected prots
+ subjectID.DPdetect.NP.expression.mtx <- subjectID.DPdetect.NP.expression.mtx.lst[[NP.missingRate.o[JJ]]]
+ subjectID.DPdetect.NP <- sapply(strsplit(colnames(subjectID.DPdetect.NP.expression.mtx),
+ split='_'),'[', 1)[1]
+ colnames(subjectID.DPdetect.NP.expression.mtx) <- sapply(strsplit(colnames(subjectID.DPdetect.NP.expression.mtx),
+ split='_'),'[', 3)
+
+ subjectID.DPdetect.NP.MissingRate <- mean(is.na(subjectID.DPdetect.NP.expression.mtx))
+
+
+ # Pairwise
+ AllPairs.mtx <- do.call('rbind', lapply(1:(ncol(subjectID.NP.expression.mtx)-1),
+   function(C1) do.call('rbind', lapply((C1+1):ncol(subjectID.NP.expression.mtx), function(C2)
+    colnames(subjectID.NP.expression.mtx)[c(C1,C2)]))))
+
+
+ subjectID.pairwise.NP.detected.mtx <- do.call('rbind', lapply(1:nrow(AllPairs.mtx),
+   function(RR) 
+   as.vector(table(!is.na(subjectID.NP.expression.mtx[,AllPairs.mtx[RR,1]]),
+                   !is.na(subjectID.NP.expression.mtx[,AllPairs.mtx[RR,2]])))))
+ rownames(subjectID.pairwise.NP.detected.mtx) <- apply(AllPairs.mtx,1,paste, collapse='\n')
+ colnames(subjectID.pairwise.NP.detected.mtx) <- c('00','10', '01','11')
+
+ subjectID.pairwise.NP.detected.mtx <- subjectID.pairwise.NP.detected.mtx[,4:1]
+
+ old_par <- par(mar=c(5,3,4,1))
+ barplot(t(subjectID.pairwise.NP.detected.mtx), beside=T,las=2, legend=T)
+ title(paste0("Pairwise Detection for ", subjectID.NP, 
+    " - NP Missing =", round(100*subjectID.NP.MissingRate,1),'%',
+  '\nDetected: ', paste(paste0(colnames(subjectID.NP.expression.mtx), '=', 
+       colSums(!is.na(subjectID.NP.expression.mtx))), collapse=', ')))
+ par(old_par)
+
+}#for(JJ
+
+```
+
+* These patterns appear to differ from Supplementary Figure 9 QC Sample Characterization.
+
+`r CAPTION <-
+paste(
+"Quality control comparing the same NP interrogating a pooled plasma across",
+"more than 1,500 injections on 2 different MS pipelines",
+" A) Raw intensity distribution for protein groups quantified.",
+"Boxplots report the 25% (lower hinge), 50%, and 75% quantiles (upper hinge).",
+"Whiskers indicate observations equal to or outside hinge + / – 1.5 * interquartile",
+"range (IQR). B) Number of protein groups at 1% protein and peptide FDR,",
+"C) CV of quantile normalized protein intensities (median CV 0.28).",
+"Grey shaded regions represent 95% confidence interval of the linear",
+"regression model.")` 
+
+```{r m1a-supp-figure9, fig.height=8, fig.width=11, fig.cap=CAPTION}
+
+knitr::include_graphics( c("../images/SuppFig9.png"))
+
+```
+
+<br/>
+
+Now look at correlations among NPs.  In the following figures, `r` is pearson correlation
+among protein groups that are detect in pairs of NPs.  `d` is the number
+of protien groups detected in NP pairs: 
+``` 
+d = TT,  FT
+    TF,  FF
+```
+
+In the following plots, we note a protein group that 
+is high in all samples but was not detected in DP - `P0DOX5`.
+
+
+```{r m1a-scatter-np-pairs, cache=T, cache.vars='',fig.height=8, fig.width=11,fig.cap="Protein Groups Detection Overlap"}
+
+
+# Get data by subject
+
+# NP expression
+subjectID.NP.expression.mtx.lst <- lapply(
+   split(data.frame(t(NP.expression.mtx)), NP.sampDesc.frm$subjectID),t)
+
+
+# DP expression
+subjectID.DP.expression.mtx.lst <- lapply(
+   split(data.frame(t(DP.expression.mtx)), DP.sampDesc.frm$subjectID),t)
+
+subjectID.NP.missingRate.vec <- sapply(subjectID.NP.expression.mtx.lst, 
+  function(X) mean(is.na(X)))
+
+# Look at NP overlap selecting sammples across the missingRate scale
+NP.missingRate.o <- order(subjectID.NP.missingRate.vec)
+
+
+# Will look at overlap in NP and DP proteins separately
+###################################
+for(JJ in 
+ seq(1, length(subjectID.NP.missingRate.vec), length.out = 6)) {
+
+ ## NP expression
+ subjectID.NP.expression.mtx <- subjectID.NP.expression.mtx.lst[[NP.missingRate.o[JJ]]]
+ subjectID.NP <- sapply(strsplit(colnames(subjectID.NP.expression.mtx),
+ split='_'),'[', 1)[1]
+ colnames(subjectID.NP.expression.mtx) <- sapply(strsplit(colnames(subjectID.NP.expression.mtx),
+ split='_'),'[', 3)
+
+ subjectID.NP.MissingRate <- mean(is.na(subjectID.NP.expression.mtx))
+ 
+ # plot pairwise
+ pairs(
+   ifelse(is.na(subjectID.NP.expression.mtx), 0, subjectID.NP.expression.mtx),
+   panel= function(x,y){
+     points(x, y)
+       #pch=GroupPch.vec[NP.sampDesc.frm$Group],
+       #col=SiteCol.vec[NP.Pooled.sampDesc.frm$Site])
+   },
+   lower.panel=function(x,y){
+       usr <- par("usr"); on.exit(par(usr))
+       par(usr = c(0, 1, 0, 1))
+       detected <- rev(as.vector(table(x>0, y>0)))
+       r <- cor(x[x>0 & y>0], y[x>0 & y>0])
+       text(0.5,0.8, paste('r =', round(r,2)), cex=1.25)
+       text(0.5,0.5, paste('d =', paste(detected[1:2], collapse=', '),
+                                 '\n', paste(detected[3:4], collapse=', ')), cex=1.25)
+       #text(0.5, 0.2, paste("Max =", rownames(subjectID.NP.expression.mtx)[
+          #which.max(rowSums(subjectID.NP.expression.mtx))]))
+   }
+  )
+  mtext(side=1, line=-1, outer=T, paste0("Pairwise Detection for ", subjectID.NP,
+    " - NP Missing =", round(100*subjectID.NP.MissingRate,1),'%',
+  '\nDetected:  ', paste(paste0(colnames(subjectID.NP.expression.mtx), '=',
+       colSums(!is.na(subjectID.NP.expression.mtx))), collapse=', ')))
+
+
+}#for(JJ
+
+```
+
+* Data for SP.333 looks of poor quality and
+should probably not be included in subsequent analyses.
+This exclusion will be examined in subsequent scripts.
+
+
+
+<br/>
+
+# Normalize data
+
+* How should these data be normalized?   
+   - Poulos et al. (2020) [@Poulos:2020aa] compare median normalization, with
+and without Combat with RUV.  
+   - Valikanga et al. (2018) [@Valikangas:2018aa] compare several normalizaton methods:
+      - Linear regression normalization: RLr, implemented in `Normalizer` [@Chawade:2014aa]
+         - see [NormalyzerDE](https://bioconductor.org/packages/release/bioc/html/NormalyzerDE.html)  
+      - Local regression normalization: LoessCyc, implemented in `limma` [@Ritchie:2015aa]  
+      - Variance stabilization normalization: Vsn, implemented in `Vsn` [@Huber:2002aa]
+      - Quantile normalization: quantile, implemented in 
+[preprocessCore](https://github.com/bmbolstad/preprocessCore).
+      - Median normalization: implemented in `Normalizer` [@Chawade:2014aa]
+      - Progenesis normalization 
+      - EigenMS normalization: see Karpievitch et al. (2009) and
+Karpievitch et al. (2014) [@Karpievitch:2009aa;@Karpievitch:2014aa]
+
+<br/>
+
+In the analyses reported in Blume et al. (2020) [@Blume:2020aa]:
+
+```
+Missing values for a given protein group within a subject were median imputed. 
+No other normalization was applied to the data prior to classification.
+```
+
+Here we will:
+
+* remove proteins 'detected' in depleted plasma  
+* missing values for a given protein group within a subject 
+will be median imputed.    
+* use `NormalyzerDE::medianNormalization` across all NPs
+except DP.
+
+<br/>
+
+
+## Impute Missing 
+
+
+```{r m1a-impute-missing, cache=T, cache.vars='NP.ExpImp.mtx', fig.height=8, fig.width=11, fig.cap="Missing Value Imputation"}
+
+tmp <- split(1:ncol(NP.expression.mtx), NP.sampDesc.frm$subjectID)
+subjectID_cols <- tmp[[1]]
+
+NP.ExpImp.mtx <- do.call('cbind', 
+ lapply(split(1:ncol(NP.expression.mtx), NP.sampDesc.frm$subjectID), 
+  function(subjectID_cols) {
+   subject.Exp.mtx <- NP.expression.mtx[, subjectID_cols]
+
+   median.vec <- apply(subject.Exp.mtx, 1, median, na.rm=T)
+
+   subject.ExpImp.mtx <- do.call('cbind', lapply(1:ncol(subject.Exp.mtx),
+    function(CC) ifelse(is.na(subject.Exp.mtx[,CC]), median.vec, 
+    subject.Exp.mtx[,CC])))
+   colnames(subject.ExpImp.mtx) <- colnames(subject.Exp.mtx)
+   subject.ExpImp.mtx}))
+NP.ExpImp.mtx <- NP.ExpImp.mtx[, colnames(NP.expression.mtx)]
+
+# Before imputation
+sumBefore.tbl <- data.frame(t(summary(colSums(is.na(NP.expression.mtx)))))[,-1]
+rownames(sumBefore.tbl) <- sumBefore.tbl[,1]
+sumBefore.tbl <- sumBefore.tbl[, -1, drop=F]
+
+knitr::kable(
+  t(round(sumBefore.tbl)), 
+  caption=paste("Number of intensities to be imputed per NP sample (nInt =",nrow(NP.expression.mtx),')')) %>% 
+ kableExtra::kable_styling(full_width = F)
+
+# After imputation
+sumAfter.tbl <- data.frame(t(summary(colSums(is.na(NP.ExpImp.mtx)))))[,-1]
+rownames(sumAfter.tbl) <- sumAfter.tbl[,1]
+sumAfter.tbl <- sumAfter.tbl[, -1, drop=F]
+
+knitr::kable(
+  t(round(sumAfter.tbl)),
+  caption=paste("Number of intensities missing after imputation per NP sample (nInt =",nrow(NP.expression.mtx),')')) %>%
+ kableExtra::kable_styling(full_width = F)
+
+ # save
+ saveObj(paste0(DD,'.ExpImp.mtx'), 'NP.ExpImp.mtx')
+```
+
+
+<br/>
+
+## Median Normalize NP expression matrix
+
+```{r m1a-median-normalize, cache=T, cache.vars='NP.medNormExpImp.mtx'}
+
+NP.medNormExpImp.mtx <- NormalyzerDE::medianNormalization(NP.ExpImp.mtx, noLogTransform=T)
+
+
+```
+
+
+Look at missing value and expression patterns in heat map.
+
+**Beware** not all columns and rows may be labeled due to space constrints.
+
+```{r m1a-heatmap-missing-before-impute, cache=T,fig.height=8, fig.witdh=11, fig.cap="Missing value pattern before imputation"}
+suppressPackageStartupMessages(require(gplots))
+
+Mycol <- colorpanel(1000, "blue", "red")
+heatmap.2(
+    x=ifelse(is.na(NP.expression.mtx), -1, 1)[, 1:100], ####NP.expression.mtx)[, 1:100],
+    Colv=F, 
+    scale="none",
+    labRow=NP.proteins.frm$prot_group,
+    labCol=NP.sampDesc.frm$subjectID[1:100],
+    col=Mycol, trace="none", density.info="none",
+    margin=c(8,6), lhei=c(2,10),
+    lwid=c(0.1,4), #lhei=c(0.1,4)
+    key=F,
+    ColSideColors=NPCol.vec[NP.sampDesc.frm$NP[1:100]],
+    dendrogram="row",
+    main="Missing Values (blue) in NP.expression.mtx[,1:100]")
+
+
+# select 10 Healthy and 10 Early subjectID
+subjectID.lst <- with(NP.sampDesc.frm, split(subjectID, Group))
+subjectID.lst <- lapply(subjectID.lst, unique)
+
+subjectID.mtx <- sapply(subjectID.lst, sample, 5)
+
+#cat("NP.expression.mtx for selected samples:\n")
+#print(subjectID.mtx)
+
+subjectID.ndx <- with(NP.sampDesc.frm, which(subjectID %in% 
+as.vector(subjectID.mtx)))
+
+
+# Get subjectCol for these
+subjectIDLegend.vec <- sort(unique(as.vector(subjectID.mtx)))
+subjectIDCol.vec <- col_vector[1:length(subjectIDLegend.vec)]
+names(subjectIDCol.vec) <- subjectIDLegend.vec
+
+subjectIDPch.vec <- 1:length(subjectIDLegend.vec)
+names(subjectIDPch.vec) <- subjectIDLegend.vec
+
+
+Mycol <- colorpanel(1000, "blue", "red")
+heatmap.2(
+    x=ifelse(is.na(NP.expression.mtx), -1, 1)[, subjectID.ndx], ####NP.expression.mtx)[, subjectID.ndx],
+    Colv=T, 
+    scale="none",
+    labRow=NP.proteins.frm$prot_group,
+    labCol=with(NP.sampDesc.frm[subjectID.ndx,], paste0(substring(Group,1,1),'_',subjectID, '_', NP)),
+    col=Mycol, trace="none", density.info="none",
+    margin=c(8,6), lhei=c(2,10),
+    lwid=c(0.1,4), #lhei=c(0.1,4)
+    key=F,
+    ColSideColors=NPCol.vec[NP.sampDesc.frm$NP[subjectID.ndx]],
+    dendrogram="both",
+    main="Missing Values (blue) in **5 Healthy and 5 Early** - Before Imputation")
+
+```
+
+Replot after imputation.
+```{r m1a-heatmap-missing-after-impute, cache=T, fig.height=8, fig.witdh=11, fig.cap="Missing value pattern after imputation"}
+
+Mycol <- colorpanel(1000, "blue", "red")
+heatmap.2(
+    x=ifelse(is.na(NP.medNormExpImp.mtx), -1, 1)[, subjectID.ndx], 
+    Colv=T, 
+    scale="none",
+    labRow=NP.proteins.frm$prot_group,
+    labCol=with(NP.sampDesc.frm[subjectID.ndx,], paste0(substring(Group,1,1),'_',subjectID, '_', NP)),
+    col=Mycol, trace="none", density.info="none",
+    margin=c(8,6), lhei=c(2,10),
+    lwid=c(0.1,4), #lhei=c(0.1,4)
+    key=F,
+    ColSideColors=subjectIDCol.vec[NP.sampDesc.frm$subjectID[subjectID.ndx]],
+    dendrogram="both",
+    main="Missing Values (blue) in **5 Healthy and 5 Early** - After Imputation")
+
+
+```
+
+Expression after imputation.
+```{r m1a-heatmap-expr-after-impute, cache=T, fig.height=8, fig.witdh=11, fig.cap="Expression pattern after imputation"}
+
+Mycol <- colorpanel(1000, "blue", "red")
+heatmap.2(
+    x=ifelse(is.na(NP.medNormExpImp.mtx), -1, NP.medNormExpImp.mtx)[, subjectID.ndx], 
+    Colv=T, 
+    scale="none",
+    labRow=NP.proteins.frm$prot_group,
+    labCol=with(NP.sampDesc.frm[subjectID.ndx,], paste0(substring(Group,1,1),'_',subjectID, '_', NP)),
+    col=Mycol, trace="none", density.info="none",
+    margin=c(8,6), lhei=c(2,10),
+    lwid=c(0.1,4), #lhei=c(0.1,4)
+    key=F,
+    ColSideColors=subjectIDCol.vec[NP.sampDesc.frm$subjectID[subjectID.ndx]],
+    dendrogram="both",
+    main="Expression Values in **5 Healthy and 5 Early** - After Imputation")
+
+
+```
+
+* Missing values pattern clusters loosely by NP  
+
+* NP.medNormExpImp.mtx clusters *by subject*  
+
+
+<br/>
+
+
+## normalized imputed expression distributions - boxplots 
+
+**Note** boxplots ignore missing vlues.
+```{r m1a-bxp-norm-imp-expr-na-ignore, eval=TRUE, cache=TRUE, cache.vars='', fig.width=11, fig.height=8,fig.cap="Boxplot Normalized Imputed Expression - ignoring missing values"}
+
+# Split by NP
+NP.medNormExpImp.mtx.lst <- lapply(split(data.frame(t(NP.medNormExpImp.mtx)), NP.sampDesc.frm$NP),t)
+
+par(mfrow=c(length(NP.medNormExpImp.mtx.lst),1), mar=c(1,4,1,1), oma=c(2,0,4,0))
+
+for(NPval in names(NP.medNormExpImp.mtx.lst)){
+ NP.expression.mtx <- NP.medNormExpImp.mtx.lst[[NPval]]
+
+ boxplot(NP.expression.mtx,
+  add = F,
+  ylim = c(2, 5), ### ylim=range(log2(qNPATisMix.dgel$counts+1))+c(0,1),
+  staplewex = 0, # remove horizontal whisker lines
+  staplecol = "white", # just to be totally sure
+  outline = F, # remove outlying points
+  whisklty = 0, # remove vertical whisker lines
+  las = 2, horizontal = F, xaxt = "n",
+  border = SiteCol.vec[NP.sampDesc.frm[colnames(NP.expression.mtx), "Site"]])
+  title(NPval)
+}
+
+  Group.vec <- NP.sampDesc.frm[colnames(NP.expression.mtx), "Group"]
+ 
+
+old_par <- par(xpd = NA)
+LL <- 0
+# ticks
+Group.ndx <- match(unique(Group.vec), Group.vec)
+axis(side = 1, tick = F, line = LL, at = Group.ndx+5, labels=unique(Group.vec))
+
+par(old_par)
+
+mtext(side=3, outer=T, cex=1.25, 
+  paste("Normalized Imputed Expression by NP - Ignoring Missing Values",
+   "\ncolor is Site"))
+
+```
+
+
+Replot, imputing missing values.
+```{r m1a-bxp-norm-imp-expr-na-impute, eval=TRUE, cache=TRUE, cache.vars='', fig.width=11, fig.height=8,fig.cap="Boxplot Normalized Imputed Expression - imputing missing values"}
+
+# Split by NP
+NP.medNormExpImp.mtx.lst <- lapply(split(data.frame(t(NP.medNormExpImp.mtx)), NP.sampDesc.frm$NP),t)
+
+par(mfrow=c(length(NP.medNormExpImp.mtx.lst),1), mar=c(1,4,1,1), oma=c(2,0,4,0))
+
+for(NPval in names(NP.medNormExpImp.mtx.lst)){
+ NP.expression.mtx <- NP.medNormExpImp.mtx.lst[[NPval]]
+
+ boxplot(ifelse(is.na(NP.expression.mtx), 0, NP.expression.mtx),
+  add = F,
+  ylim = c(2, 5), ### ylim=range(log2(qNPATisMix.dgel$counts+1))+c(0,1),
+  staplewex = 0, # remove horizontal whisker lines
+  staplecol = "white", # just to be totally sure
+  outline = F, # remove outlying points
+  whisklty = 0, # remove vertical whisker lines
+  las = 2, horizontal = F, xaxt = "n",
+  border = SiteCol.vec[NP.sampDesc.frm[colnames(NP.expression.mtx), "Site"]])
+  title(NPval)
+}
+
+  Group.vec <- NP.sampDesc.frm[colnames(NP.expression.mtx), "Group"]
+ 
+
+old_par <- par(xpd = NA)
+LL <- 0
+# ticks
+Group.ndx <- match(unique(Group.vec), Group.vec)
+axis(side = 1, tick = F, line = LL, at = Group.ndx+5, labels=unique(Group.vec))
+
+par(old_par)
+
+mtext(side=3, outer=T, cex=1.25, 
+  paste("Normalized Imputed Expression by NP - Imputing Missing Values",
+   "\ncolor is Site"))
+
+```
+
+
+<br/>
+
+
+## normalized imputed expression distributions - densities 
+
+
+```{r m1a-dens-norm-imp-dens-expr, eval=TRUE, cache=TRUE, cache.vars='', fig.width=11, fig.height=8,fig.cap="Density normalized imputed Expression"}
+
+# Split by NP
+NP.medNormExpImp.mtx.lst <- lapply(split(data.frame(t(NP.medNormExpImp.mtx)), NP.sampDesc.frm$NP),t)
+
+par(mfrow=c(2,3), mar=c(3,4,2,1), oma=c(2,0,2,0))
+
+for(NPval in names(NP.medNormExpImp.mtx.lst)){
+
+ NP.expression.mtx <- NP.medNormExpImp.mtx.lst[[NPval]]
+
+ NP.NAs.vec <- colSums(is.na(NP.expression.mtx))
+ NP.median.vec <- apply(NP.expression.mtx,2,median,na.rm=T)
+
+ NP.expression.mtx[is.na(NP.expression.mtx)] <- rnorm(n=sum(is.na(NP.expression.mtx)), mean=0, sd=0.5)
+ plot(density(NP.expression.mtx[, 1]),
+  col = SiteCol.vec[NP.sampDesc.frm[colnames(NP.expression.mtx)[1],"Site"]],
+  lty = 1, lwd = 2, xlim = c(-1, 8), ylim = c(0, .4), las = 2,
+  main = "", xlab = ""
+ )
+ title(paste(NPval, "- NAs IQR =", paste(quantile(NP.NAs.vec, prob=c(1,3)/4), collapse=', ')))
+   #'\nMedian IQR =', paste(round(quantile(NP.median.vec, prob=c(1,3)/4),2), collapse=', ')))
+
+ for (JJ in 2:ncol(NP.expression.mtx)) {
+  den <- density(NP.expression.mtx[, JJ])
+  lines(den$x, den$y,
+    col = SiteCol.vec[NP.sampDesc.frm[colnames(NP.expression.mtx)[JJ],"Site"]],
+    lwd = 2, lty = 1
+  )
+ }
+
+
+}
+
+mtext(side=3, outer=T, cex=1.25, "normalized imputed Expression by NP - color is Site/Class; NA coded as ~ 0 +/- 0.5")
+
+```
+
+<br/> 
+
+
+# Pool NP data
+
+For predictive modeling, we will pool the data across nano particles by subject.
+Question is - How to pool?
+
+* can collate the NP data as if they are independent measures.
+
+* can summarize across NPs by averaging
+
+* Other?  
+
+In a first pass, we will simply average imputed protein 
+intensities across NPs within each sibject.
+
+
+
+```{r m1a-pool-medNormExpImp, cache=T, cache.vars=c('NP.Pooled.medNormExpImp.mtx', 'NP.Pooled.sampDesc.frm'),fig.height=8, fig.width=11, fig.cap="Missing Value Imputation"}
+
+# with(NP.sampDesc.frm, table(table(subjectID)))
+
+ NP.Pooled.medNormExpImp.mtx <- do.call('cbind', lapply(split(as.data.frame(t(NP.medNormExpImp.mtx)),
+  NP.sampDesc.frm$subjectID), function(SUB.mtx) 
+   rowMeans(t(ifelse(is.na(as.matrix(SUB.mtx)), 0,as.matrix(SUB.mtx))))))
+
+ #dim(NP.Pooled.medNormExpImp.mtx)
+
+ #NP.Pooled.medNormExpImp.mtx[1:5, 1:5]
+
+ VARS <- 
+ c("subjectID", "Site", "Group", "Gender", "age", "class", "stage", "complete_subjects", "healthy_early_analysis")
+ NP.Pooled.sampDesc.frm <- unique(NP.sampDesc.frm[, VARS])
+
+ rownames(NP.Pooled.sampDesc.frm) <- NP.Pooled.sampDesc.frm$subjectID
+ NP.Pooled.sampDesc.frm <- NP.Pooled.sampDesc.frm[colnames(NP.Pooled.medNormExpImp.mtx),]
+
+
+NO.NEED.TO.REPEAT <- function() {
+knitr::kable(
+ with(NP.Pooled.sampDesc.frm, table(Site, paste0(Group,'_', Gender) )) ) %>%
+ kableExtra::kable_styling(full_width = F)
+}
+ 
+ # Reorder by Group, Site, Gender
+ o.v <- with(NP.Pooled.sampDesc.frm, order(Group, Site, Gender))
+ NP.Pooled.sampDesc.frm <- NP.Pooled.sampDesc.frm[o.v,]
+ NP.Pooled.medNormExpImp.mtx <- NP.Pooled.medNormExpImp.mtx[, o.v]
+
+ # Save these
+ saveObj(paste0(DD,'.NP.Pooled.sampDesc.frm'), 'NP.Pooled.sampDesc.frm')
+ saveObj(paste0(DD,'.NP.Pooled.medNormExpImp.mtx'), 'NP.Pooled.medNormExpImp.mtx')
+  
+
+```
+
+
+<br/>
+
+## View pooled data zero/missing value pattern in heatmap.
+```{r m1a-heatmap-missing-pooled, cache=T, fig.height=8, fig.witdh=11, fig.cap="Zero/Missing value pattern after pooling"}
+
+subjectID.ndx <- 1:ncol(NP.Pooled.medNormExpImp.mtx)
+
+Mycol <- colorpanel(1000, "blue", "red")
+heatmap.2(
+    x=ifelse(NP.Pooled.medNormExpImp.mtx==0, -1, 1)[, subjectID.ndx], 
+    Colv=T, 
+    scale="none",
+    labRow=NP.proteins.frm$prot_group,
+    labCol=with(NP.Pooled.sampDesc.frm[subjectID.ndx,], 
+       paste0(substring(Group,1,1),'_',subjectID,'_',Gender)),
+    col=Mycol, trace="none", density.info="none",
+    margin=c(8,6), lhei=c(2,10),
+    lwid=c(0.1,4), #lhei=c(0.1,4)
+    key=F,
+    ColSideColors=GroupCol.vec[NP.Pooled.sampDesc.frm[subjectID.ndx,"Group"]],
+    dendrogram="both",
+    main="Zero/Missing values (blue) in imputed data pooled across NPs")
+
+
+```
+
+<br/>
+
+## Expression in pooled data - heatmap
+
+```{r m1a-heatmap-expr-pooled, cache=T, fig.height=8, fig.witdh=11, fig.cap="Expression pattern after pooling"}
+
+
+subjectID.ndx <- 1:ncol(NP.Pooled.medNormExpImp.mtx)
+
+Mycol <- colorpanel(1000, "blue", "red")
+heatmap.2(
+    x=NP.Pooled.medNormExpImp.mtx[, subjectID.ndx],
+    Colv=T,
+    scale="none",
+    labRow=NP.proteins.frm$prot_group,
+    labCol=with(NP.Pooled.sampDesc.frm[subjectID.ndx,], 
+       paste0(substring(Group,1,1),'_',subjectID,'_',Gender)),
+    col=Mycol, trace="none", density.info="none",
+    margin=c(8,6), lhei=c(2,10),
+    lwid=c(0.1,4), #lhei=c(0.1,4)
+    key=F,
+    ColSideColors=GroupCol.vec[NP.Pooled.sampDesc.frm[subjectID.ndx,"Group"]],
+    dendrogram="both",
+    main="Expression values in imputed data pooled across NPs")
+
+
+```
+
+
+<br/>
+
+## pooled normalized imputed expression distributions - boxplots 
+
+**Note** there are no missing values in the pooled imputed expression matrix;
+but there are zeroes.
+```{r m1a-bxp-pool-norm-imp-expr, eval=TRUE, cache=TRUE, cache.vars='', fig.width=11, fig.height=8,fig.cap="Boxplot Pooled Normalized Imputed Expression"}
+
+old_par <- par(xpd = F)
+ boxplot(NP.Pooled.medNormExpImp.mtx,
+  add = F,
+  ylim = c(0, 5), ### ylim=range(log2(qNPATisMix.dgel$counts+1))+c(0,1),
+  staplewex = 0, # remove horizontal whisker lines
+  staplecol = "white", # just to be totally sure
+  outline = F, # remove outlying points
+  whisklty = 0, # remove vertical whisker lines
+  las = 2, horizontal = F, xaxt = "n",
+  border = SiteCol.vec[NP.Pooled.sampDesc.frm[colnames(NP.Pooled.medNormExpImp.mtx), "Site"]])
+  #title("Intensities Pooled across NPs")
+
+  Group.vec <- NP.Pooled.sampDesc.frm[colnames(NP.Pooled.medNormExpImp.mtx), "Group"]
+ 
+
+old_par <- par(xpd = NA)
+LL <- 0
+# ticks
+Group.ndx <- match(unique(Group.vec), Group.vec)
+axis(side = 1, tick = F, line = LL, at = Group.ndx+5, labels=unique(Group.vec))
+par(old_par)
+
+abline(v=Group.ndx[-1]-.5, col='grey')
+
+mtext(side=3, outer=T, cex=1.25, "Pooled Expression across NPs - color is Site")
+
+```
+
+* Some variability at the distribution level is apparent - see medians, for example.
+
+* Still many zeroes
+
+
+## Examine missingness in pooled imputed data
+
+```{r m1a-missing-pooled-imputed,echo=T, include=T, eval=T, cache=T, cache.vars='',fig.height=6, fig.width=11,fig.cap="Fraction Zeroes in Pooled Imputed Data"}
+
+
+pZero.pooled.imputed.vec <- colMeans(NP.Pooled.medNormExpImp.mtx==0)
+
+kable(t(apply(data.frame(propZero=pZero.pooled.imputed.vec),2,summary)),
+  digits=2, caption="Summary: Percent Zeroes in Samples") %>%
+ kableExtra::kable_styling(full_width = F)
+
+
+bar.out <- barplot(pZero.pooled.imputed.vec, 
+   col=SiteCol.vec[NP.Pooled.sampDesc.frm[names(pZero.pooled.imputed.vec), 'Site']], 
+    xaxt='n')
+
+title("Fraction of Zeroes in Pooled Imputed Data")
+
+Group.vec <- NP.Pooled.sampDesc.frm[names(pZero.pooled.imputed.vec), 'Group']
+
+old_par <- par(xpd = NA)
+LL <- 0
+# ticks
+Group.ndx <- match(unique(Group.vec), Group.vec)
+axis(side = 1, tick = F, line = LL, at = bar.out[Group.ndx+5], labels=unique(Group.vec))
+par(old_par)
+
+abline(v=bar.out[Group.ndx[-1]]-.5, col='grey')
+
+```
+
+* Fraction zeroes remain high, variable and associated with site.
+
+
+<br/>
+
+
+<!-- SKIP
+## pooled normalized imputed expression distributions - densities 
+-->
+
+```{r m1a-dens-pooled-norm-imp-dens-expr, eval=TRUE, cache=TRUE, cache.vars='', fig.width=11, fig.height=8,fig.cap="Density Pooled Normalized Imputed Expression", echo=F, eval=F}
+
+ par(oma=c(0,0,2,0))
+
+ nZero.vec <- colSums(NP.Pooled.medNormExpImp.mtx==0)
+ NP.median.vec <- apply(NP.Pooled.medNormExpImp.mtx,2,median,na.rm=T)
+
+ NP.Pooled.medNormExpImp.mtx[is.na(NP.Pooled.medNormExpImp.mtx)] <- rnorm(n=sum(is.na(NP.Pooled.medNormExpImp.mtx)), mean=0, sd=0.5)
+ plot(density(NP.Pooled.medNormExpImp.mtx[, 1]),
+  col = SiteCol.vec[NP.Pooled.sampDesc.frm[colnames(NP.Pooled.medNormExpImp.mtx)[1],"Site"]],
+  lty = 1, lwd = 2, xlim = c(-1, 8), ylim = c(0, .4), las = 2,
+  main = "", xlab = ""
+ )
+ title(paste("nZ IQR =", paste(quantile(nZero.vec, prob=c(1,3)/4), collapse=', '),
+   '\nMedian IQR =', paste(round(quantile(NP.median.vec, prob=c(1,3)/4),2), collapse=', ')))
+
+ for (JJ in 2:ncol(NP.Pooled.medNormExpImp.mtx)) {
+  den <- density(NP.Pooled.medNormExpImp.mtx[, JJ])
+  lines(den$x, den$y,
+    col = SiteCol.vec[NP.Pooled.sampDesc.frm[colnames(NP.Pooled.medNormExpImp.mtx)[JJ],"Site"]],
+    lwd = 2, lty = 1
+  )
+ }
+
+
+mtext(side=3, outer=T, cex=1.25, "normalized imputed Expression pooled across NPs - color is Site/Class; NA coded as ~ 0 +/- 0.5")
+
+```
+
+<!--
+* Quite a bit of variability in densities, probably mostly explained by NAs  
+-->
+
+<br/>
+
+## PCA pooled normalized imputed expression 
+
+The principal components (also in this context called singular vectors) 
+of the sample × protein group expression array are the linear combinations of the 
+protein group measurements having the largest, second largest, third largest,. . . 
+variation, standardized to be of unit length and orthogonal to the preceding components. 
+The main PCA plots of interest in examinaing unwanted variabtion
+are of the second versus the first principal component (PC) of the 
+sample x expression array. 
+The calculations are done on mean-corrected protein group expression
+using the R code adopted from the EDASeq R package ([@Risso:2011aa]).
+
+
+<br/> 
+
+
+
+### EDASeq::plotPCA
+
+In the following figures, plotting symbol is Group; color is site.
+
+```{r m1a-pca-pooled-norm-imp, cache=T, cache.vars='', fig.height=8, fig.width=11,fig.cap='Pooled Normed Imputed Expression PCA plots',echo=T, eval=T}
+
+par(mfrow = c(1, 1), mar = c(5, 4, 2, 1), oma = c(0, 1, 4, 2))
+
+
+EDASeq::plotPCA(NP.Pooled.medNormExpImp.mtx,  k=4, isLog=T,
+   pch=GroupPch.vec[NP.Pooled.sampDesc.frm$Group],
+   col=SiteCol.vec[NP.Pooled.sampDesc.frm$Site],
+   labels=F)
+
+#legend('topright',legend=names(GroupCol.vec), text.col=GroupCol.vec, bty='n', ncol=2)
+
+
+```
+
+* Question: What is driving the 'V'-shape pattern in the PCs?
+   - Look at mean intensity, median RLE
+
+```{r m1a-PCs-vs-sample-features, cache=T, cache.vars='', fig.height=8, fig.width=11, fig.cap="PCs vs sample features"}
+
+  NP.Pooled.medNormExpImp.svd <- svd(scale(t(NP.Pooled.medNormExpImp.mtx), center=T, scale=F))
+
+percent <- NP.Pooled.medNormExpImp.svd$d^2/sum(NP.Pooled.medNormExpImp.svd$d^2)*100
+
+NP.Pooled.medNormExpImp.svd$u <- as.matrix(NP.Pooled.medNormExpImp.svd$u,
+   nrow=nrow(NP.Pooled.medNormExpImp.svd$u))
+
+colnames(NP.Pooled.medNormExpImp.svd$u) <- paste0('PC', 1:ncol(NP.Pooled.medNormExpImp.svd$u))
+
+NP.Pooled.medNormExpImp.median.vec <- apply(NP.Pooled.medNormExpImp.mtx, 1, median)
+NP.Pooled.RLE.mtx <- sweep(NP.Pooled.medNormExpImp.mtx, 1, NP.Pooled.medNormExpImp.median.vec, '-')
+
+pairs(cbind(med_RLE=apply(NP.Pooled.RLE.mtx,2,median),
+            #nZ = colSums(NP.Pooled.medNormExpImp.mtx==0),
+            meanInt = colMeans(NP.Pooled.medNormExpImp.mtx),
+            age=NP.Pooled.sampDesc.frm$age,
+            NP.Pooled.medNormExpImp.svd$u[, 1:3]),
+  lower.panel=NULL,
+  panel= function(x,y){
+   points(x, y, 
+       pch=GroupPch.vec[NP.Pooled.sampDesc.frm$Group],
+       col=SiteCol.vec[NP.Pooled.sampDesc.frm$Site])
+  })
+
+ mtext(side=1, outer=T, line=-3, "PCs vs sample features")
+```
+
+* PC1 = Intensity
+
+* What is PC2?
+
+```{r m1a-PC2-vs-group, cache=T, cache.vars='', fig.height=8, fig.width=11, fig.cap="PCs vs Group (color is site)"}
+
+NP.Pooled.medNormExpImp.svd <- svd(scale(t(NP.Pooled.medNormExpImp.mtx), center=T, scale=F))
+
+NP.Pooled.medNormExpImp.svd$u <- as.matrix(NP.Pooled.medNormExpImp.svd$u,
+   nrow=nrow(NP.Pooled.medNormExpImp.svd$u))
+
+colnames(NP.Pooled.medNormExpImp.svd$u) <- paste0('PC', 1:ncol(NP.Pooled.medNormExpImp.svd$u))
+
+
+old_par <- par(mfrow=c(2,2), mar=c(3,2,2,1))
+
+for(PC in paste0("PC", 1:4)) {
+ PC.lst <- split(NP.Pooled.medNormExpImp.svd$u[, PC], NP.Pooled.sampDesc.frm$Group)
+ Site.lst <- with(NP.Pooled.sampDesc.frm, split(Site, Group))
+
+ boxplot(PC.lst, outline = F)
+
+ for(JJ in 1:2) points(jitter(rep(JJ, length(PC.lst[[JJ]])), amount=0.25), PC.lst[[JJ]],
+   col=SiteCol.vec[Site.lst[[JJ]]])
+
+ title(PC)
+}
+
+par(old_par)
+
+```
+
+<br/>
+
+### MDS
+
+```{r m1a-plotMDS-pooled-norm-imp, cache=T, cache.vars='', fig.height=5, fig.width=10, fig.cap='MDS plots Pooled Normed Imputed Expression', echo=T}
+#### CLEAR CACHE
+
+old_par <- par(mfcol = c(1, 2), mar = c(4, 4, 2, 1), xpd = NA, oma = c(0, 0, 2, 0))
+
+
+MDS.out <- limma::plotMDS(NP.Pooled.medNormExpImp.mtx, 
+  pch = GroupPch.vec[NP.Pooled.sampDesc.frm$Group],
+  col = SiteCol.vec[NP.Pooled.sampDesc.frm$Site] 
+)
+
+legend("topleft", title='Group',
+  legend = names(GroupPch.vec), pch=GroupPch.vec)
+
+
+MDS.out <- limma::plotMDS(NP.Pooled.medNormExpImp.mtx,
+  pch = GroupPch.vec[NP.Pooled.sampDesc.frm$Group],
+  col = SiteCol.vec[NP.Pooled.sampDesc.frm$Site],
+  dim.plot = 3:4, xlim=c(-.7, 2))
+
+legend("topright", title='Site',
+  legend=names(SiteCol.vec), text.col=SiteCol.vec, ncol=2, bty='n')
+
+par(old_par)
+```
+
+
+<br/>
+
+`glMDSPlot` from package `Glimma` provides an interactive MDS 
+plot that can extremely usful for exploration
+
+```{r m1a-GlMDSplot-pooled-norm-imp, echo=T,cache=T, cache.vars='', fig.height=6, fig.width=11,fig.cap="MDS plots Pooled Normed Imputed Expression", echo=T}
+#### CLEAR CACHE
+
+Glimma::glMDSPlot(NP.Pooled.medNormExpImp.mtx,
+  groups = NP.Pooled.sampDesc.frm[ , c("Group", "Site", "Gender", "age", "stage") ],
+  main = paste("MDS plot: filtered counts"), #### , Excluding outlier samples"),
+  path = ".", folder = figures_DIR,
+  html = paste0("GlMDSplot_medNormExpImp"), launch = F
+)
+
+```
+
+Link to glMDSPlot: 
+[Here](`r file.path(figures_DIR, paste0("GlMDSplot_medNormExpImp.html"))`)  
+
+
+<br/>
+
+
+<!--  SKIP
+### Hierarchical clustering plots 
+--> 
+
+```{r m1a-hclust-pooled-norm-imp, fig.height=24, fig.width=11,fig.cap="Hierarchical Clustering Plot based on Lin's C",cache=T,cache.vars=c(''),eval=T, echo=F, include=F}
+
+CLUSTMETH <- "complete"
+
+suppressPackageStartupMessages(require(epiR))
+Lc.f <- function(x, y) epiR::epi.occc(cbind(x, y))$occc
+
+### function to set label color
+labelCol <- function(x, labCol = NULL) {
+  if (is.leaf(x)) {
+    ## fetch label
+    label <- attr(x, "label")
+    ## set label color to red for A and B, to blue otherwise
+    if (!is.null(labCol)) attr(x, "nodePar") <- list(lab.col = labCol[label], lab.cex = 0.8)
+    # ifelse(label %in% c("A", "B"), "red", "blue"))
+  }
+  return(x)
+}
+
+# par(mar=par('mar')+c(5,0,0,0))
+
+
+# Get Color vector prior to renaming columns
+Sub.GroupCol.vec <- GroupCol.vec[NP.Pooled.sampDesc.frm$Group]
+
+colnames(NP.Pooled.medNormExpImp.mtx) <- with(
+  NP.Pooled.sampDesc.frm,
+  paste0(Group, '_', Site))
+
+# ifelse(QC0,'F','P'),ifelse(QC1,'F','P'),ifelse(QC2,'F','P')))
+
+names(Sub.GroupCol.vec) <- colnames(NP.Pooled.medNormExpImp.mtx)
+
+# Get corr/dist/hclust
+NP.Pooled.medNormExpImp.dist <- proxy::dist(NP.Pooled.medNormExpImp.mtx,
+  by_rows = F,
+  method=function(x,y) 1 - Lc.f(x, y)
+)
+  #method = function(x, y) 1 - Lc.f(x[], y[])
+
+NP.Pooled.medNormExpImp.hclust <- hclust(NP.Pooled.medNormExpImp.dist, method = CLUSTMETH)
+
+NP.Pooled.medNormExpImp.hclust <-
+  dendrapply(as.dendrogram(NP.Pooled.medNormExpImp.hclust), labelCol, labCol = Sub.GroupCol.vec)
+
+# Plot
+old_par <- par(mar = c(4, 4, 2, 8), xpd = F)
+plot(NP.Pooled.medNormExpImp.hclust,
+  xlab = "1 - LinC", ylab = "", sub = "", xlim = c(0.45, 0),
+  horiz = T, xaxt = "n", yaxt = "n",
+  main = ""  ###paste("Clustering on Lin's C")
+)
+abline(v = (1:5) / 100, col = "grey")
+axis(
+  side = 1, at = c(0, .01, .02, .03, .04, .05, .1, .15, .25, .35),
+  labels = 1 - c(0, .01, .02, .03, .04, .05, .1, .15, .25, .35)
+)
+
+
+par(old_par)
+```
+
+
+
+<br/> 
+
+
+* There is no clear batch effect in the PCA plot based on the pooled expression data,
+but there is a strange 'V' shaped pattern which may be explained
+by the incidence of zeroes/missing values.  This appears to be a combination of 
+effects: PC1 ~ Intensity; PC2 ~ biology 
+
+
+In the predictive analytics, we will apply some filtering which
+may remove this effect.
+
+
+
+<br/>
+
+#  Separate Data Set into Train and Test Subsets
+
+We will separate the data set into **Train** and **Test** subsets here, before
+any other filtering or data manipulation.  In particular, since we will
+be interested in evaluating the effect of protein group selection
+this selection must be made on the basis of the training subset only.
+
+<!--
+Take note that the expression matrices that we save here will
+be transposed with `proteins in columns`.  This is done to accumulate
+the data format expected by the `caret` package.
+-->
+
+
+```{r m1a-getTrainTest, cache=TRUE,cache.vars='EXPR'}
+ # CHANGE THIS LINE TO CLEAR CACHE
+ suppressMessages(require(caret))
+
+ # Get sample attributes
+ sampAttr.frm <- NP.Pooled.sampDesc.frm
+
+
+ # Get expression data matrix 
+ EXPR <- 'Pooled.medNormExpImp'
+
+ Expr.mtx <- t(NP.Pooled.medNormExpImp.mtx)
+
+ # Use protein group names where possible
+ colnames(Expr.mtx) <- make.names(NP.proteins.frm$prot_group)
+ rownames(Expr.mtx) <- rownames(sampAttr.frm)
+
+
+ DataSource.vec <- sampAttr.frm$Site
+ names(DataSource.vec) <- rownames(sampAttr.frm)
+
+ Label.vec <- sampAttr.frm$Group ###ifelse(is.element(sampAttr.frm$MS_Status, c('Early', 'No')), 'Early','MSI')
+ names(Label.vec) <- rownames(sampAttr.frm)
+
+ # split Into Train and Test
+ set.seed(12379)
+ inTrain <- createDataPartition(y=Label.vec, p=0.75, list=F)
+
+ Train.Expr.mtx <- Expr.mtx[inTrain,]
+ Train.Label.vec <- Label.vec[inTrain]
+ Train.DataSource.vec <- DataSource.vec[inTrain]
+
+
+ Test.Expr.mtx <- Expr.mtx[-inTrain,]
+ Test.Label.vec <- Label.vec[-inTrain]
+ Test.DataSource.vec <- Label.vec[-inTrain]
+
+ kable(rbind(Train=dim(Train.Expr.mtx),
+             Test=dim(Test.Expr.mtx)),
+  caption='Train and Test set dimensions') %>%
+ kableExtra::kable_styling(full_width = F)
+
+ kable(rbind(
+ Train=table(Train.Label.vec)/length(Train.Label.vec),
+ Test=table(Test.Label.vec)/length(Test.Label.vec)),
+   digits=2, caption='Group Proportions')  %>%
+ kableExtra::kable_styling(full_width = F)
+
+
+
+ # Save these
+ saveObj(paste0(DD,'.Train.', EXPR, '.mtx'), 'Train.Expr.mtx')
+ saveObj(paste0(DD,'.Train.Label.vec'), 'Train.Label.vec')
+
+ saveObj(paste0(DD,'.Test.', EXPR, '.mtx'), 'Test.Expr.mtx')
+ saveObj(paste0(DD,'.Test.Label.vec'), 'Test.Label.vec')
+
+```
+<!-- ######################################################################## -->
+
+
+<br/>
+
+## Save Protein Group Sets
+
+For predictive modeling, we will restrict the analysis to
+protein groups that pass a threshold of detectability.
+Protein group sets will be selected by overall detection *in training samples*.
+
+Note that we select protein groups based on detection in the entire training
+dataset which includes data from different sites.  This selection
+may affect some sites differently.  Site to site
+variability is an issue here, as elsewhere.
+
+```{r m1a-saveProteinGroupSets,cache=TRUE,cache.vars=''}
+ # CHANGE THIS LINE TO CLEAR CACHE
+ loadObj(paste0(DD,'.Train.', EXPR, '.mtx'), 'Train.Expr.mtx')
+
+ # Identify and remove low detection columns
+ Train.Expr.nDetected.vec <- colSums(Train.Expr.mtx > 0)
+
+kable(t(apply(data.frame(
+  propDetected=Train.Expr.nDetected.vec/nrow(Train.Expr.mtx)),2,summary)),
+  digits=2, caption="Summary: Proportion of samples protein is detected in") %>%
+ kableExtra::kable_styling(full_width = F)
+
+ cat("25% of protein groups are undetected in",
+    round(100*quantile(Train.Expr.nDetected.vec/nrow(Train.Expr.mtx), prob=0.25),1), "% of train samples.\n")
+ cat("50% of protein groups are undetected in",
+    round(100*quantile(Train.Expr.nDetected.vec/nrow(Train.Expr.mtx), prob=0.5),1), "% of train samples.\n")
+
+ cat(round(100*mean(Train.Expr.nDetected.vec > nrow(Train.Expr.mtx)/2),1),
+ '% of protein groups are detected in half of the train samples.\n')
+
+ # ProtGroup50 - detected in 50% of samples
+ ProtGroup50.cols <- which(Train.Expr.nDetected.vec > nrow(Train.Expr.mtx)/2)
+ Train.ProtGroup50.vec <- colnames(Train.Expr.mtx)[ProtGroup50.cols]
+ cat(length(Train.ProtGroup50.vec), "Protein Groups in Train.ProtGroup50.vec")
+
+ saveObj(paste0(DD, '.Train.ProtGroup50.vec'), 'Train.ProtGroup50.vec')
+
+ # also save Detected in 75%
+ ProtGroup75.cols <- which(Train.Expr.nDetected.vec > 0.75*nrow(Train.Expr.mtx))
+ Train.ProtGroup75.vec <- colnames(Train.Expr.mtx)[ProtGroup75.cols]
+ cat(length(Train.ProtGroup75.vec), "Protein Groups in Train.ProtGroup75.vec")
+
+ saveObj(paste0(DD, '.Train.ProtGroup75.vec'), 'Train.ProtGroup75.vec')
+
+
+```
+<!-- ######################################################################## -->
+
+<br/>
+
+## Summarize train data over selected protein groups
+
+```{r m1a-load-train-data,cache=T,cache.vars=c('Train.ProtGroup50.vec','Train.ProtGroup75.vec','Train.Expr.mtx', 'Train.Label.vec')}
+
+ # Load Data
+ loadObj(paste0(DD, '.Train.ProtGroup50.vec'), 'Train.ProtGroup50.vec')
+ loadObj(paste0(DD, '.Train.ProtGroup75.vec'), 'Train.ProtGroup75.vec')
+
+ loadObj(paste0(DD,'.Train.', EXPR, '.mtx'), 'Train.Expr.mtx')
+ loadObj(paste0(DD,'.Train.Label.vec'), 'Train.Label.vec')
+
+```
+
+
+<br/>
+
+### Boxplots
+
+```{r m1a-bxp-train, eval=TRUE, cache=TRUE, cache.vars='', fig.width=11, fig.height=8,fig.cap="Boxplot Expression for Train Samples"}
+
+ par(mfrow=c(2,1), mar=c(2,3,2,1), oma=c(0,0,2,0), xpd=F)
+
+ # Train.ProtGroup50
+ boxplot(t(Train.Expr.mtx[, Train.ProtGroup50.vec]),
+  add = F,
+  ylim = c(0, 5), ### ylim=range(log2(qNPATisMix.dgel$counts+1))+c(0,1),
+  staplewex = 0, # remove horizontal whisker lines
+  staplecol = "white", # just to be totally sure
+  outline = F, # remove outlying points
+  whisklty = 0, # remove vertical whisker lines
+  las = 2, horizontal = F, xaxt = "n",
+  border = SiteCol.vec[NP.Pooled.sampDesc.frm[rownames(Train.Expr.mtx), "Site"]])
+  title("Train.ProtGroup50 (Detected in 50% of samples) Protein Groups")
+
+
+ # Train.ProtGroup75
+ boxplot(t(Train.Expr.mtx[, Train.ProtGroup75.vec]),
+  add = F,
+  ylim = c(0, 5), ### ylim=range(log2(qNPATisMix.dgel$counts+1))+c(0,1),
+  staplewex = 0, # remove horizontal whisker lines
+  staplecol = "white", # just to be totally sure
+  outline = F, # remove outlying points
+  whisklty = 0, # remove vertical whisker lines
+  las = 2, horizontal = F, xaxt = "n",
+  border = SiteCol.vec[NP.Pooled.sampDesc.frm[rownames(Train.Expr.mtx), "Site"]])
+  title("Train.ProtGroup75 (Detected in 75% of samples) Protein Groups")
+
+
+  Group.vec <- NP.Pooled.sampDesc.frm[rownames(Train.Expr.mtx), "Group"]
+
+old_par <- par(xpd = NA)
+LL <- 0
+# ticks
+Group.ndx <- match(unique(Group.vec), Group.vec)
+axis(side = 1, tick = F, line = LL, at = Group.ndx+5, labels=unique(Group.vec))
+par(old_par)
+
+abline(v=Group.ndx[-1]-.5, col='grey')
+
+mtext(side=3, outer=T, cex=1.25, 
+   "Training Data - Expression for Selected Protein Groups - color is Site")
+
+par(old_par)
+
+```
+
+* Some variability at the distribution level is apparent ...
+
+For predictive modeling, we will restrict the analysis to protein groups
+that are detected in 75% of the samples.
+
+
+```{r m1a-missing-train-protgrouo75,echo=T, include=T, eval=T, cache=T, cache.vars='',fig.height=6, fig.width=11,fig.cap="Fraction Zeroes in Pooled Imputed Data - ProtGroup75"}
+
+
+Train.ProtGroup75.Expr.mtx <- Train.Expr.mtx[, Train.ProtGroup75.vec]
+
+pZero.Train.ProtGroup75.vec <- rowMeans(Train.ProtGroup75.Expr.mtx==0)
+
+kable(t(apply(data.frame(propZero=pZero.Train.ProtGroup75.vec),2,summary)),
+  digits=2, caption="Summary: ProtGroup75 Percent Zeroes in Samples") %>%
+ kableExtra::kable_styling(full_width = F)
+
+
+bar.out <- barplot(pZero.Train.ProtGroup75.vec, 
+   col=SiteCol.vec[NP.Pooled.sampDesc.frm[names(pZero.Train.ProtGroup75.vec), 'Site']], 
+    xaxt='n')
+
+title("Fraction of Zeroes in Pooled Imputed Data for ProtGroup75")
+
+Group.vec <- NP.Pooled.sampDesc.frm[names(pZero.Train.ProtGroup75.vec), 'Group']
+
+old_par <- par(xpd = NA)
+LL <- 0
+# ticks
+Group.ndx <- match(unique(Group.vec), Group.vec)
+axis(side = 1, tick = F, line = LL, at = bar.out[Group.ndx+5], labels=unique(Group.vec))
+par(old_par)
+
+abline(v=bar.out[Group.ndx[-1]]-.5, col='grey')
+
+```
+<!-- 
+<br/>
+
+### Densities - TO DO
+
+
+```{r m1a-dens-train, eval=TRUE, cache=TRUE, cache.vars='', fig.width=11, fig.height=8,fig.cap="Density Expression for Train Samples"}
+
+```
+
+### PCA - TO DO
+
+-->
+
+<br/>
+
+
+# Train Predictive Models
+
+We are ready to use the Training data to evaluate various predictive models.
+
+Set up training parameters:
+
+```{r m1a-train-param}
+SelProtGroups <- 'ProtGroup75'
+
+CV <- list(Num=10, Rep=30)
+
+```
+
+* SelProtGroups: `r SelProtGroups`  
+
+* CV: Num=`r CV$Num`  Rep=`r CV$Rep`  
+
+
+```{r m1a-load-train-data-2}
+
+ suppressMessages(require(caret))
+
+ SelProtGroups.CV <- paste(SelProtGroups, '.CV.', paste(unlist(CV), collapse='_'),sep='')
+
+ cvControl <- trainControl(method = "repeatedcv", number=CV$Num, repeats=CV$Rep,
+                           classProbs = TRUE, summaryFunction = twoClassSummary,
+                           savePredictions='final')
+
+ # Load Data
+ loadObj(paste0(DD, '.Train.',SelProtGroups,'.vec'), 'SelProtGroups.vec')
+ 
+ loadObj(paste0(DD,'.Train.', EXPR, '.mtx'), 'Train.Expr.mtx')
+ Train.SelProtGroups.Expr.mtx <- Train.Expr.mtx[, SelProtGroups.vec]
+ rm(Train.Expr.mtx)
+
+ loadObj(paste0(DD,'.Train.Label.vec'), 'Train.Label.vec')
+
+ #dim(Train.SelProtGroups.Expr.mtx);length(Train.Label.vec)
+``` 
+<!-- ######################################################################## -->
+
+
+Set up parallel computing.
+
+```{r m1a-doMC, echo=F}
+
+ suppressMessages(require(doMC))
+ suppressMessages(require(parallel))
+ cat("Cores =", detectCores(),'\n')
+ registerDoMC(cores=detectCores()-1)
+
+```
+<!-- ######################################################################## -->
+
+
+
+We will use the `r SelProtGroups` protein groups in this analysis.
+
+Model tuning and optimization will be done based on
+`r CV$Rep` repetitions of `r CV$Num`-fold cross-validations.
+This provides `r CV$Rep` cross-validated, or out-of-sample, predicted values 
+for each sample in the training set.  The distribution of predicted values
+can be examined to identify hard to predict samples.  Some of these
+samples may potentially be mis-labelled, or may be hard to fit for other
+reasons.  One might consider doing an analysis which exludes these samples
+from the training set to see what impact they have on the fits.
+
+Some of the models which can be evaluated with `caret` include:
+
+* glmnet - generalized linear model via penalized maximum likelihood
+* stepLDA - Linear Discriminant Analysis with Stepwise Feature Selection
+* stepQDA - Qaudratic Discriminant Analysis with Stepwise Feature Selection
+* knn - k nearest neighbors
+* pam - Nearest shrunken centroids
+* rf - Random forests
+* svmRadial - Support vector machines (RBF kernel)
+* gbm - Boosted trees
+* xgbLinear - eXtreme Gradient Boosting
+* xgbTree - eXtreme Gradient Boosting
+* neuralnet - neural network
+
+Many more [models](https://topepo.github.io/caret/available-models.html)
+ can be implemented and evaluated with `caret`, including `deep learning` methods.  
+
+<!-- 
+Method requiring explicit dimensionality reduction:
+* dlda, lda, qda - Classical linear disrimanent alalysis preceded  by variable selection
+
+Methods which are not adapted to classification problems (penalized regression methods):
+* pls - Partial least squares
+* lasso - The lasso
+* enet - Elastic net
+
+These methods dont work.
+* rda - Regularized discriminant analysis
+* multinom - Logistic/Multinomial regression
+* nnet - neural network
+-->
+
+Silently fit models ...
+
+<!-- 
+
+## glmnet - generalized linear model via penalized maximum likelihood
+
+```{r m1a-glmnetFit, cache=TRUE,cache.vars='', eval=F, echo=T, include=F}
+## DO ONCE
+
+ # CHANGE THIS LINE TO CLEAR CACHE
+ ################################# 
+ set.seed(12379)
+ SelProtGroups.glmnetFit.tm <- system.time(
+  SelProtGroups.glmnetFit <- train(Train.SelProtGroups.Expr.mtx, Train.Label.vec,
+               method="glmnet",
+               trControl=cvControl, preProc=c('center','scale'))
+ )
+ print(SelProtGroups.glmnetFit.tm)
+ print(SelProtGroups.glmnetFit)
+
+ saveObj(paste0(DD,'.',EXPR,'.',SelProtGroups.CV, '.glmnetFit'), 'SelProtGroups.glmnetFit')
+
+``` 
+
+
+## lasso - elastic net with alpha = 1.00
+
+
+```{r m1a-lassoFit, cache=TRUE,cache.vars='', eval=F, echo=T, include=F}
+ # CHANGE THIS LINE TO CLEAR CACHE
+ ################################# 
+ set.seed(12379)
+ SelProtGroups.lassoFit.tm <- system.time(
+  SelProtGroups.lassoFit <- train(Train.SelProtGroups.Expr.mtx, Train.Label.vec,
+               method="glmnet",
+               trControl=cvControl, preProc=c('center','scale'),
+                tuneGrid = expand.grid(alpha = 1.00,
+                                        lambda = seq(0.01,0.3,by = 0.02)))
+
+ )
+ print(SelProtGroups.lassoFit.tm)
+ print(SelProtGroups.lassoFit)
+
+ saveObj(paste0(DD,'.',EXPR,'.',SelProtGroups.CV, '.lassoFit'), 'SelProtGroups.lassoFit')
+
+``` 
+
+
+## enet models: elastic net with alpha = 0.50
+
+```{r m1a-enetFit, cache=TRUE,cache.vars='', eval=F, echo=T, include=F}
+ # CHANGE THIS LINE TO CLEAR CACHE
+ #################################
+ set.seed(12379)
+ SelProtGroups.enetFit.tm <- system.time(
+  SelProtGroups.enetFit <- train(Train.SelProtGroups.Expr.mtx, Train.Label.vec,
+               method="glmnet",
+               trControl=cvControl, preProc=c('center','scale'),
+                tuneGrid = expand.grid(alpha = 0.55,
+                                        lambda = seq(0.01,0.3,by = 0.02)))
+
+ )
+ print(SelProtGroups.enetFit.tm)
+ print(SelProtGroups.enetFit)
+
+ saveObj(paste0(DD,'.',EXPR,'.',SelProtGroups.CV, '.enetFit'), 'SelProtGroups.enetFit')
+
+```
+
+
+## stepLDAFit - Stepwise linear discriminant analysis
+
+Don't know why this takes so long.  
+
+```{r m1a-stepLDAFit, cache=TRUE,cache.vars='', eval=F, echo=T, include=F}
+ # CHANGE THIS LINE TO CLEAR CACHE
+ ################################# 
+ set.seed(12379)
+ SelProtGroups.stepLDAFit.tm <- system.time(
+  SelProtGroups.stepLDAFit <- train(Train.SelProtGroups.Expr.mtx, Train.Label.vec,
+               method="stepLDA",
+               trControl=cvControl, preProc=c('center','scale'))
+ )
+ print(SelProtGroups.stepLDAFit.tm)
+ print(SelProtGroups.stepLDAFit)
+
+ saveObj(paste0(DD,'.',EXPR,'.',SelProtGroups.CV, '.stepLDAFit'), 'SelProtGroups.stepLDAFit')
+
+``` 
+
+## stepQDAFit - Stepwise quadratic discriminant analysis
+
+Don't know why this takes so long.  
+
+```{r m1a-stepQDAFit, cache=TRUE,cache.vars='', eval=F, echo=T, include=F}
+ # CHANGE THIS LINE TO CLEAR CACHE
+ ################################# 
+ set.seed(12379)
+ SelProtGroups.stepQDAFit.tm <- system.time(
+  SelProtGroups.stepQDAFit <- train(Train.SelProtGroups.Expr.mtx, Train.Label.vec,
+               method="stepQDA",
+               trControl=cvControl, preProc=c('center','scale'))
+ )
+ print(SelProtGroups.stepQDAFit.tm)
+ print(SelProtGroups.stepQDAFit)
+
+ saveObj(paste0(DD,'.',EXPR,'.',SelProtGroups.CV, '.stepQDAFit'), 'SelProtGroups.stepQDAFit')
+
+``` 
+
+## knn - k nearest neighbors
+```{r m1a-knnFit, cache=TRUE,cache.vars='', eval=F, include=F}
+ # CHANGE THIS LINE TO CLEAR CACHE
+ ################################# 
+ set.seed(12379)
+ SelProtGroups.knnFit.tm <- system.time(
+  SelProtGroups.knnFit <- train(Train.SelProtGroups.Expr.mtx, Train.Label.vec,
+               method="knn", tuneLength=10,
+               trControl=cvControl, preProc=c('center','scale'))
+ )
+ print(SelProtGroups.knnFit.tm)
+ print(SelProtGroups.knnFit)
+
+ saveObj(paste0(DD,'.',EXPR,'.',SelProtGroups.CV, '.knnFit'), 'SelProtGroups.knnFit')
+
+```
+
+
+## pam - Prediction analysis for microrrays [@Tibshirani:2002aa]
+```{r m1a-pamFit, cache=TRUE,cache.vars='',eval=F, include=F}
+ set.seed(12379)
+ SelProtGroups.pamFit.tm <- system.time(
+ SelProtGroups.pamFit <- train(Train.SelProtGroups.Expr.mtx, Train.Label.vec,
+               method="pam",
+               trControl=cvControl, preProc=c('center','scale'))
+ )
+ print(SelProtGroups.pamFit.tm)
+ print(SelProtGroups.pamFit)
+
+ saveObj(paste0(DD,'.',EXPR,'.',SelProtGroups.CV, '.pamFit'), 'SelProtGroups.pamFit')
+
+```
+
+## rf - Random forests
+```{r m1a-rfFit, cache=TRUE,cache.vars='',eval=F, include=F}
+ set.seed(12379)
+ SelProtGroups.rfFit.tm <- system.time(
+ SelProtGroups.rfFit <- train(Train.SelProtGroups.Expr.mtx, Train.Label.vec,
+               method="rf",
+               trControl=cvControl, preProc=c('center','scale'))
+ )
+ print(SelProtGroups.rfFit.tm)
+ print(SelProtGroups.rfFit)
+
+ saveObj(paste0(DD,'.',EXPR,'.',SelProtGroups.CV, '.rfFit'), 'SelProtGroups.rfFit')
+
+```
+
+
+## svmRadial - Support vector machines (RBF kernel)
+```{r m1a-svmRadialFit, cache=TRUE,cache.vars='',eval=F, include=F}
+ set.seed(12379)
+ SelProtGroups.svmRadialFit.tm <- system.time(
+ SelProtGroups.svmRadialFit <- train(Train.SelProtGroups.Expr.mtx, Train.Label.vec,
+               method="svmRadial",
+               trControl=cvControl, preProc=c('center','scale'))
+ )
+ print(SelProtGroups.svmRadialFit.tm)
+ print(SelProtGroups.svmRadialFit)
+
+ saveObj(paste0(DD,'.',EXPR,'.',SelProtGroups.CV, '.svmRadialFit'), 'SelProtGroups.svmRadialFit')
+
+```
+
+## gbm - Boosted trees
+```{r m1a-gbmFit, cache=TRUE,cache.vars='',eval=F, include=F}
+ set.seed(12379)
+ SelProtGroups.gbmFit.tm <- system.time(
+ SelProtGroups.gbmFit <- train(Train.SelProtGroups.Expr.mtx, Train.Label.vec,
+               method="gbm", verbose=F,
+               trControl=cvControl, preProc=c('center','scale'))
+ )
+ print(SelProtGroups.gbmFit.tm)
+ print(SelProtGroups.gbmFit)
+
+ saveObj(paste0(DD,'.',EXPR,'.',SelProtGroups.CV, '.gbmFit'), 'SelProtGroups.gbmFit')
+
+```
+
+
+## xgbLinear - eXtreme Gradient Boosting
+```{r m1a-xgbLinearFit, cache=TRUE,cache.vars='',eval=F, include=F}
+ set.seed(12379)
+ SelProtGroups.xgbLinearFit.tm <- system.time(
+ SelProtGroups.xgbLinearFit <- train(Train.SelProtGroups.Expr.mtx, Train.Label.vec,
+               method="xgbLinear", verbose=F,
+               trControl=cvControl, preProc=c('center','scale'))
+ )
+ print(SelProtGroups.xgbLinearFit.tm)
+ print(SelProtGroups.xgbLinearFit)
+
+ saveObj(paste0(DD,'.',EXPR,'.',SelProtGroups.CV, '.xgbLinearFit'), 'SelProtGroups.xgbLinearFit')
+
+```
+
+## xgbTree - eXtreme Gradient Boosting
+TAKES TOOOO LOOOOONG 
+```{r m1a-xgbTreeFit, cache=TRUE,cache.vars='',echo=FALSE, eval=FALSE, include=F}
+ set.seed(12379)
+ SelProtGroups.xgbTreeFit.tm <- system.time(
+ SelProtGroups.xgbTreeFit <- train(Train.SelProtGroups.Expr.mtx, Train.Label.vec,
+               method="xgbTree", verbose=F,
+               trControl=cvControl, preProc=c('center','scale'))
+ )
+ print(SelProtGroups.xgbTreeFit.tm)
+ print(SelProtGroups.xgbTreeFit)
+
+ saveObj(paste0(DD,'.',EXPR,'.',SelProtGroups.CV, '.xgbTreeFit'), 'SelProtGroups.xgbTreeFit')
+
+```
+
+
+End Silently fit models ...
+
+-->
+
+<br/>
+
+# Compare Predictive Models {#compare-predictive-models}
+
+Here we compare predictive models in terms of:
+
+- Processing time
+- Prediction accuracy and ROC on train `out-of-fold` samples
+- Prediction accuracy and ROC on test samples
+- Direct comparison of variable importance
+
+<br/>
+
+
+## Load Models
+
+
+```{r m1a-getModels}
+
+ # Load Train and Test Data
+ loadObj(paste0(DD, '.Train.',SelProtGroups,'.vec'), 'SelProtGroups.vec')
+
+ loadObj(paste0(DD,'.Train.', EXPR, '.mtx'), 'Train.Expr.mtx')
+ Train.SelProtGroups.Expr.mtx <- Train.Expr.mtx[, SelProtGroups.vec]
+ rm(Train.Expr.mtx)
+
+ loadObj(paste0(DD,'.Test.', EXPR, '.mtx'), 'Test.Expr.mtx')
+ Test.SelProtGroups.Expr.mtx <- Test.Expr.mtx[, SelProtGroups.vec]
+ rm(Test.Expr.mtx)
+
+ loadObj(paste0(DD,'.Train.Label.vec'), 'Train.Label.vec')
+ loadObj(paste0(DD,'.Test.Label.vec'), 'Test.Label.vec')
+
+ CLASS1 <- as.character(sort(unique(Train.Label.vec))[1])
+
+ # Load models
+ ModelFit.vec <- grep(paste0(DD,'.',EXPR,'.',SelProtGroups.CV),
+  list.files(file.path(WRKDIR, 'Data'), 'Fit$'), value=T)
+
+ # Exclude knn, pam
+ ModelFit.vec <- setdiff(ModelFit.vec,
+  c(grep('pamFit', ModelFit.vec, value=T),
+    grep('knnFit', ModelFit.vec, value=T)))
+
+ names(ModelFit.vec) <- sapply(strsplit(ModelFit.vec, spli='\\.'),
+  function(x) rev(x)[1])
+
+
+ # Get Model.col for plotting (only have one FitSetCV values here.  could have many)
+ ModelCol.vec <- as.numeric(as.factor(names(ModelFit.vec)))
+ names(ModelCol.vec) <- names(ModelFit.vec)
+
+ cat("Found", length(ModelFit.vec), 'models:\n')
+ print(ModelFit.vec)
+
+ # Load Models for single set (we cd have more than one set in FitSetCV.vec)
+ Set.ModelFit.lst <- lapply(ModelFit.vec,
+  function(MF) {
+   loadObj(paste(MF, sep='.'), 'ModelFit')
+   ModelFit})
+
+```
+<!-- ######################################################################## -->
+
+<br/>
+
+## Compare Times
+```{r m1a-compTimes, cache=TRUE, cache.vars=''}
+
+  Set.ModelTimes.frm <- do.call('rbind', lapply(Set.ModelFit.lst,
+  function(LL) c(all=LL$times$everything)))###, final=LL$times$final)))
+
+  kable(Set.ModelTimes.frm, digits=2, caption="Compute Time") %>%
+ kableExtra::kable_styling(full_width = F)
+
+```
+<!-- ######################################################################## -->
+
+
+<br/>
+
+## Compare Prediction Accuracy
+
+<!-- SKIP - Train Data Accuracy is meaningless
+### Train Data Accuracy
+-->
+```{r m1a-trainAccuracy, cache=TRUE, cache.vars='', eval=F, echo=F}
+ suppressMessages(require(caret))
+
+ # Train - these are fitting errors
+ Set.Train.Pred.lst <- suppressMessages(predict(Set.ModelFit.lst))
+          #, newdata=Train.SelProtGroups.Expr.mtx))
+
+ Set.Train.TruthTable.frm <- do.call('rbind', lapply(Set.Train.Pred.lst,
+ function(PRED) {
+   truth.vec <- as.vector(table(PRED, Train.Label.vec))#/length(Train.Label.vec)
+   # ASSUMING MSI is FIRST LABEL of CLASS
+   names(truth.vec) <- c('TN', 'FP', 'FN', 'TP')
+   truth.vec}))
+
+  kable(data.frame(cbind(Set.Train.TruthTable.frm,
+                  Set.Train.TruthTable.frm/length(Train.Label.vec))),
+    digits=2, align='c', caption="Train Data Accuracy") %>%
+ kableExtra::kable_styling(full_width = F)
+
+
+```
+<!-- ######################################################################## -->
+
+
+<br/>
+
+### Out of Fold Train Data Accuracy
+```{r m1a-OOFTrainAccuracy, cache=TRUE, cache.vars='Set.ModelFit.oofPred.mtx.lst'}
+
+  Set.ModelFit.oofPred.mtx.lst <- lapply(Set.ModelFit.lst,
+ function(MF) {
+   MF.pred.mtx <- MF$pred
+   Rep.vec <- sapply(strsplit(MF$pred$Resample, split='\\.'),'[', 2)
+   rowIndex.vec <- sort(unique(MF$pred$rowIndex))
+   Pred.mtx <- do.call('cbind', lapply(split(MF$pred, Rep.vec),
+   function(RepMFpred.frm)
+      as.character(RepMFpred.frm[match(rowIndex.vec, RepMFpred.frm$rowIndex),'pred'])))
+   Pred.mtx})
+
+ # Use mode over reps as prediction
+ ############################################
+ Set.ModelFit.oofPred.vec.lst <- lapply(Set.ModelFit.oofPred.mtx.lst,
+ function(PRED.mtx) apply(PRED.mtx,1,function(Pred.vec)
+ names(table(Pred.vec))[which.max(table(Pred.vec))]))
+
+ Set.Train.oofPredMode.TruthTable.frm <- do.call('rbind', lapply(Set.ModelFit.oofPred.vec.lst,
+ function(PRED) {
+   truth.vec <- as.vector(table(PRED, Train.Label.vec))#/length(Train.Label.vec)
+   # ASSUMING MSI is FIRST LABEL of CLASS
+   names(truth.vec) <- c('TN', 'FP', 'FN', 'TP')
+   truth.vec}))
+
+ kable(data.frame(cbind(Set.Train.oofPredMode.TruthTable.frm,
+                  Set.Train.oofPredMode.TruthTable.frm/length(Train.Label.vec))),
+    digits=2, align='c', caption="Out of Fold Train Data Accuracy - Mode over Repeats") %>%
+ kableExtra::kable_styling(full_width = F)
+
+```
+
+```{r m1a-OOFTrainAccuracy-2, cache=TRUE, cache.vars='', include=F}
+ ############################################
+ # alternatively, can look at the oofPred by rep
+ # and use mean for error rates
+ ############################################
+ Set.Train.oofPredMean.TruthTable.frm <- do.call('rbind', lapply(Set.ModelFit.oofPred.mtx.lst,
+  function(PRED.mtx) {
+   TruthTable.mtx <- do.call('rbind', lapply(1:ncol(PRED.mtx),
+   function(CC) as.vector(table(PRED.mtx[,CC], Train.Label.vec)/length(Train.Label.vec))))
+   apply(TruthTable.mtx,2,mean)}))
+  colnames(Set.Train.oofPredMean.TruthTable.frm) <- c('TN', 'FP', 'FN', 'TP')
+
+    kable(data.frame(Set.Train.oofPredMean.TruthTable.frm),
+       digits=2, align='c',
+      caption="Out of Fold Train Data Accuracy - mean over Repeats") %>%
+ kableExtra::kable_styling(full_width = F)
+  
+
+```
+<!-- ######################################################################## -->
+
+<br/>
+
+### Test Data Accuracy
+```{r m1a-testAccuracy, cache=TRUE, cache.vars='',message=F}
+ suppressMessages(require(caret))
+
+ # Test - these are fitting errors
+ Set.Test.Pred.lst <- lapply(Set.ModelFit.lst,
+          function(MF) predict(MF, newdata=Test.SelProtGroups.Expr.mtx))
+
+ Set.Test.TruthTable.frm <- do.call('rbind', lapply(Set.Test.Pred.lst,
+ function(PRED) {
+   truth.vec <- as.vector(table(PRED, Test.Label.vec))#/length(Test.Label.vec)
+   # ASSUMING MSI is FIRST LABEL of CLASS
+   names(truth.vec) <- c('TN', 'FP', 'FN', 'TP')
+   truth.vec}))
+
+ kable(data.frame(cbind(Set.Test.TruthTable.frm,
+                  Set.Test.TruthTable.frm/length(Test.Label.vec))),
+    digits=2, align='c', caption="Test Set Accuracy")  %>% 
+ kableExtra::kable_styling(full_width = F)
+
+
+```
+<!-- ######################################################################## -->
+
+
+<br/>
+
+## Compare Models in Terms of ROC
+
+<!-- SKIP - meaningless
+### Training Data ROC
+-->
+```{r m1a-CompROCTrain, cache=TRUE, cache.vars='Set.Train.roc.mtx.lst', fig.height=6, fig.width=11, message=F, echo=F, eval=F}
+ # CHANGE THIS LINE TO CLEAR CACHE
+ suppressMessages(require(pROC))
+
+ ################################
+ # Train
+ ################################
+ # Get predicted probabilities
+ Set.Train.Prob.lst <- suppressMessages(predict(Set.ModelFit.lst, type='prob'))
+ Set.Train.ProbClass1.mtx <- do.call('cbind',
+    lapply(Set.Train.Prob.lst, function(x) x[,CLASS1]))
+
+ rownames(Set.Train.ProbClass1.mtx) <- names(Train.Label.vec)
+
+ # ROC
+ Set.Train.roc.mtx.lst <- lapply(colnames(Set.Train.ProbClass1.mtx), function(MM)
+    do.call('rbind', lapply(rev(sort(unique(Set.Train.ProbClass1.mtx))),
+     function(TS) {
+        TP <- sum(Set.Train.ProbClass1.mtx[,MM][Train.Label.vec==CLASS1] > TS, na.rm=T)
+        FP <- sum(Set.Train.ProbClass1.mtx[,MM][Train.Label.vec==CLASS2] > TS, na.rm=T)
+        c(TS=TS, TP=TP, FP=FP)}))
+   )
+ names(Set.Train.roc.mtx.lst) <- colnames(Set.Train.ProbClass1.mtx)
+ # Get auc
+ Set.Train.auc.vec <- sapply(1:ncol(Set.Train.ProbClass1.mtx), function(CC)
+   auc(Train.Label.vec, Set.Train.ProbClass1.mtx[,CC]))
+ names(Set.Train.auc.vec) <- colnames(Set.Train.ProbClass1.mtx)
+
+
+ plot(x=range(do.call('c', lapply(Set.Train.roc.mtx.lst,
+                function(LL) LL[,'FP'])))/sum(Train.Label.vec==CLASS2),
+      y=range(do.call('c', lapply(Set.Train.roc.mtx.lst,
+                function(LL) LL[,'TP'])))/sum(Train.Label.vec==CLASS1),
+      xlab='FP', ylab='TP', type='n')
+
+ for(II in 1:length(Set.Train.roc.mtx.lst))
+ lines(x=Set.Train.roc.mtx.lst[[II]][,'FP']/sum(Train.Label.vec==CLASS2),
+       y=Set.Train.roc.mtx.lst[[II]][,'TP']/sum(Train.Label.vec==CLASS1),
+       col=ModelCol.vec[names(Set.Train.roc.mtx.lst)[II]])
+ abline(0,1, col='grey')
+ legend('bottomright',
+        legend=paste(names(Set.Train.roc.mtx.lst), ':',
+          round(Set.Train.auc.vec[names(Set.Train.roc.mtx.lst)],3),sep=''),
+        col=ModelCol.vec[names(Set.Train.roc.mtx.lst)],
+        lty=1)
+ title('Model Performance on Train Set - Meaningless!')
+
+```
+<!-- ######################################################################## -->
+
+<br/>
+
+### Out of Fold Train Set Performance: Average over Repeats
+
+`r CAPTION <- 'Model Performance on Train Set - OOF mean Prob(Early)'`
+
+```{r m1a-CompROCOOFTrain, cache=T, fig.height=6, fig.width=11, message=F, fig.cap=CAPTION}
+ suppressMessages(require(pROC))
+ # Get predicted probabilities
+ Set.ModelFit.oofProbClass1.mtx.lst <- lapply(Set.ModelFit.lst,
+ function(MF) {
+   MF.pred.mtx <- MF$pred
+   Rep.vec <- sapply(strsplit(MF$pred$Resample, split='\\.'),'[', 2)
+   rowIndex.vec <- sort(unique(MF$pred$rowIndex))
+   ProbClass1.mtx <- do.call('cbind', lapply(split(MF$pred, Rep.vec),
+   function(RepMFpred.frm)
+      RepMFpred.frm[match(rowIndex.vec, RepMFpred.frm$rowIndex),CLASS1]))
+   ProbClass1.mtx})
+
+ 
+ #################################
+ # Use average oofProb
+ #################################
+ Set.Train.mean_oofProbClass1.mtx <- do.call('cbind', lapply(Set.ModelFit.oofProbClass1.mtx.lst,
+  function(oofProbClass1.mtx) apply(oofProbClass1.mtx,1,mean)))
+ rownames(Set.Train.mean_oofProbClass1.mtx) <- names(Train.Label.vec)
+
+ # ROC
+  Set.Train.mean_oofProbClass1.roc.mtx.lst <-
+  lapply(colnames(Set.Train.mean_oofProbClass1.mtx), function(MM)
+   do.call('rbind', lapply(rev(sort(unique(Set.Train.mean_oofProbClass1.mtx))),
+    function(TS) {
+     TP <- sum(Set.Train.mean_oofProbClass1.mtx[,MM][Train.Label.vec==CLASS1] > TS, na.rm=T)
+     FP <- sum(Set.Train.mean_oofProbClass1.mtx[,MM][Train.Label.vec==CLASS2] > TS, na.rm=T)
+        c(TS=TS, TP=TP, FP=FP)}))
+   )
+ names(Set.Train.mean_oofProbClass1.roc.mtx.lst) <- colnames(Set.Train.mean_oofProbClass1.mtx)
+
+ # Get auc
+ Set.Train.mean_oofProbClass1.auc.vec <- sapply(1:ncol(Set.Train.mean_oofProbClass1.mtx), function(CC)
+   auc(Train.Label.vec, Set.Train.mean_oofProbClass1.mtx[,CC]))
+ names(Set.Train.mean_oofProbClass1.auc.vec) <- colnames(Set.Train.mean_oofProbClass1.mtx)
+
+
+ plot(x=range(do.call('c', lapply(Set.Train.mean_oofProbClass1.roc.mtx.lst,
+                function(LL) LL[,'FP'])))/sum(Train.Label.vec==CLASS2),
+      y=range(do.call('c', lapply(Set.Train.mean_oofProbClass1.roc.mtx.lst,
+                function(LL) LL[,'TP'])))/sum(Train.Label.vec==CLASS1),
+      xlab='FP', ylab='TP', type='n')
+
+ for(II in 1:length(Set.Train.mean_oofProbClass1.roc.mtx.lst))
+ lines(x=Set.Train.mean_oofProbClass1.roc.mtx.lst[[II]][,'FP']/sum(Train.Label.vec==CLASS2),
+       y=Set.Train.mean_oofProbClass1.roc.mtx.lst[[II]][,'TP']/sum(Train.Label.vec==CLASS1),
+       lwd=2,
+       col=ModelCol.vec[names(Set.Train.mean_oofProbClass1.roc.mtx.lst)[II]])
+ abline(0,1, col='grey')
+ legend('bottomright',
+        legend=paste(names(Set.Train.mean_oofProbClass1.auc.vec), ':',
+          round(Set.Train.mean_oofProbClass1.auc.vec,3),sep=''),
+       lwd=2,
+        col=ModelCol.vec[names(Set.Train.mean_oofProbClass1.auc.vec)], lty=1)
+ #title(paste0('Model Performance on Train Set - OOF mean Prob(',CLASS1,')'))
+
+```
+<!-- ######################################################################## -->
+
+* Note that it is not clear what we can infer from CVs in the presence of
+a high rate of missing values.
+
+
+<br/>
+
+### Out of Fold Set.Train: Individual Repeats
+
+`r CAPTION = 'Model Performance on Set.Train Set - indiv OOF Prob(Early)'`
+```{r m1a-CompROCIndivOOFTrain, cache=T, fig.height=6, fig.width=11,message=F, fig.cap=CAPTION}
+ suppressMessages(require(pROC))
+
+ #################################
+ # Replot ROC keep individual rep oofProbClass1
+ #################################
+ Set.Train.indiv_oofProbClass1.mtx <- do.call('cbind', lapply(names(Set.ModelFit.oofProbClass1.mtx.lst),
+  function(MODEL) {
+   oofProbClass1.mtx <- Set.ModelFit.oofProbClass1.mtx.lst[[MODEL]]
+   colnames(oofProbClass1.mtx) <- paste(MODEL, colnames(oofProbClass1.mtx),sep='.')
+   oofProbClass1.mtx}))
+ rownames(Set.Train.indiv_oofProbClass1.mtx) <- names(Train.Label.vec)
+
+ # ROC
+ Set.Train.indiv_oofProbClass1.roc.mtx.lst <- lapply(colnames(Set.Train.indiv_oofProbClass1.mtx), function(MM)
+    do.call('rbind', lapply(rev(sort(unique(Set.Train.indiv_oofProbClass1.mtx))),
+     function(TS) {
+        TP <- sum(Set.Train.indiv_oofProbClass1.mtx[,MM][Train.Label.vec==CLASS1] > TS, na.rm=T)
+        FP <- sum(Set.Train.indiv_oofProbClass1.mtx[,MM][Train.Label.vec==CLASS2] > TS, na.rm=T)
+        c(TS=TS, TP=TP, FP=FP)}))
+   )
+ names(Set.Train.indiv_oofProbClass1.roc.mtx.lst) <- colnames(Set.Train.indiv_oofProbClass1.mtx)
+
+
+ # Get auc
+ Set.Train.indiv_oofProbClass1.auc.vec <- sapply(1:ncol(Set.Train.indiv_oofProbClass1.mtx), function(CC)
+   auc(Train.Label.vec, Set.Train.indiv_oofProbClass1.mtx[,CC]))
+ names(Set.Train.indiv_oofProbClass1.auc.vec) <- colnames(Set.Train.indiv_oofProbClass1.mtx)
+
+ Set.Train.mean_indiv_oofProbClass1.auc.vec <- sapply(split(Set.Train.indiv_oofProbClass1.auc.vec,
+   sapply(strsplit(names(Set.Train.indiv_oofProbClass1.auc.vec), split='\\.'),'[',1)),
+   mean)
+
+ plot(x=range(do.call('c', lapply(Set.Train.indiv_oofProbClass1.roc.mtx.lst,
+                function(LL) LL[,'FP'])))/sum(Train.Label.vec==CLASS2),
+      y=range(do.call('c', lapply(Set.Train.indiv_oofProbClass1.roc.mtx.lst,
+                function(LL) LL[,'TP'])))/sum(Train.Label.vec==CLASS1),
+      xlab='FP', ylab='TP', type='n')
+
+ for(II in 1:length(Set.Train.indiv_oofProbClass1.roc.mtx.lst))
+ lines(x=Set.Train.indiv_oofProbClass1.roc.mtx.lst[[II]][,'FP']/sum(Train.Label.vec==CLASS2),
+       y=Set.Train.indiv_oofProbClass1.roc.mtx.lst[[II]][,'TP']/sum(Train.Label.vec==CLASS1),
+       col=ModelCol.vec[sapply(strsplit(names(Set.Train.indiv_oofProbClass1.roc.mtx.lst),'\\.'),'[',1)[II]])
+ abline(0,1, col='grey')
+ legend('bottomright',
+        legend=paste(names(Set.Train.mean_indiv_oofProbClass1.auc.vec), ':',
+        round(Set.Train.mean_indiv_oofProbClass1.auc.vec,3),sep=''),
+       lwd=2,
+       col=ModelCol.vec[names(Set.Train.mean_indiv_oofProbClass1.auc.vec)],lty=1)
+ #title('Model Performance on Set.Train Set - indiv OOF Prob(Early)')
+
+```
+
+`r CAPTION = 'Distribution of AUC stats over CV reps'`
+
+```{r m1a-CompROCIndivOOFTrain-auc, cache=T, fig.height=6, fig.width=11,message=F, fig.cap=CAPTION}
+
+ # Boxplot individual aucs
+ boxplot(split(Set.Train.indiv_oofProbClass1.auc.vec,
+   sub('Fit','', sapply(strsplit(names(Set.Train.indiv_oofProbClass1.auc.vec), split='\\.'),'[',1))))
+ #title('Distribution of AUC stats over CV reps')
+
+  Set.Train.indiv_oofProbClass1.auc.mtx <- do.call('rbind',
+  lapply(split(Set.Train.indiv_oofProbClass1.auc.vec,
+   sapply(strsplit(names(Set.Train.indiv_oofProbClass1.auc.vec), split='\\.'),'[',1)),
+   function(x) {Res=x; names(Res)<- sapply(strsplit(names(Res),split='\\.'),'[',2);Res}))
+
+ # This is redundant
+ #kable(data.frame(Set.Train.indiv_oofProbClass1.auc.mtx,
+                  #mean_os=Set.Train.mean_oofProbClass1.auc.vec),
+                  ##Test = Test.auc.vec),
+    #digits=2, format='html',align='c')
+
+```
+<!-- ######################################################################## -->
+
+
+<br/>
+
+### Compare Predicted Probabilities
+
+With the repeated CV fitting set-up, we can examine the distribution of out-of-sample
+predictions.   This is useful to both characterize the mode of errors occuring
+in a given model - are the errors due to bias or variability? - as well as
+chracterizing samples - some samples may be mis-labelled or hard to 
+classify correctly.
+
+`r CAPTION = 'Out-of-fold predictions - boxplots of repeats'`
+```{r m1a-CompOOFSet-TrainProbClass1, cache=T, fig.height=12, fig.width=12, fig.cap=CAPTION}
+
+  if(sum(rownames(Set.Train.indiv_oofProbClass1.mtx) !=
+         names(Train.Label.vec)))
+  stop("Sample ordering problem.")
+
+  # Reorder by Outcome
+  row.o <- order(Train.Label.vec, names(Train.Label.vec))
+
+  Col.Models.vec <- sapply(strsplit(colnames(Set.Train.indiv_oofProbClass1.mtx), split='\\.'),'[',1)
+
+  par(mfrow=c(length(unique(Col.Models.vec)),1), mar=c(0,5,2,1), oma=c(5,0,1,0))
+
+  for(MOD in unique(Col.Models.vec)) {
+   Mod.cols <- which(Col.Models.vec==MOD)
+
+   box.out <-
+   boxplot(t(Set.Train.indiv_oofProbClass1.mtx[row.o,Mod.cols]),
+           col=ifelse(Train.Label.vec[row.o]==CLASS1,2,3),
+           xaxt='n', outline=F)
+   title(MOD)
+  }#for(MOD
+
+axis(side=1, at=1:length(Train.Label.vec), names(Train.Label.vec)[row.o],
+  las=2, cex.axis=0.8)
+ 
+```
+<!-- ######################################################################## -->
+
+
+
+```{r m1a-varImpHelp, echo=FALSE, cache=TRUE, cache.vars='caret.varImp.path'}
+ # CHANGE TO CLEAR CACHE .
+ caret.varImp.path <- file.path(help_DIR, 'caret.varImp.html')
+ static_help("caret", "varImp", out=caret.varImp.path)
+```
+
+<br/>
+
+## Look at Variable Importance
+
+The `caret` package provides methods to extract variable importance through
+the [varImp](`r caret.varImp.path`) function.  Here we will extract these assessments
+for each model.
+
+<!--
+  and compare with  ...
+
+-->
+```{r m1a-readProteinGroupSets, echo=F, eval=F}
+  EarlyMSI.ProteinGroupSets.frm <- read.table(file=file.path(EXT_DATA, "ColonCancerProteinGroupSets.tab"),
+   header=T, sep='\t')
+
+  ProteinGroupSets.lst <- split(EarlyMSI.ProteinGroupSets.frm$GeneSymbol, toupper(EarlyMSI.ProteinGroupSets.frm$ListName))
+  ProteinGroupSets.lst <- ProteinGroupSets.lst[c('BANERJEA','CROCE','JORISSEN', 'KOINUMA', 'KRUHOFFER','MORI')]
+
+```
+
+```{r m1a-varImp, cache=T}
+ suppressMessages(require(caret))
+
+ ## Load gene to probe set map
+ #load(file=file.path(WRKDIR, 'Data', 'GeneNameMap.vec'))
+ 
+ # Will also need the inverted map
+ #GeneNameMap2.vec <- names(GeneNameMap.vec)
+ #names(GeneNameMap2.vec) <- GeneNameMap.vec
+
+  Set.ModelFit.Top20.lst <- lapply(setdiff(names(Set.ModelFit.lst),
+                                   c("gbmFit","knnFit","sddaLDAFit","sddaQDAFit")),
+  function(MOD) {
+    #cat(MOD,'\n')
+    FIT <- Set.ModelFit.lst[[MOD]]
+
+    if(is.element(CLASS1, colnames(varImp(FIT)$imp)))
+    impVar.vec <- varImp(FIT)$imp[,CLASS1] else
+    impVar.vec <- varImp(FIT)$imp$Overall
+
+    top20.ndx <- rev(order(impVar.vec))[1:20]
+    varImp.vec <- impVar.vec[top20.ndx]
+    names(varImp.vec) <- rownames(varImp(FIT)$imp)[top20.ndx]
+    varImp.vec
+    })
+  names(Set.ModelFit.Top20.lst) <- setdiff(names(Set.ModelFit.lst),
+                                   c("gbmFit","knnFit","sddaLDAFit","sddaQDAFit"))
+
+  Top20.Name.vec <- unique(do.call('c', lapply(Set.ModelFit.Top20.lst, function(VV) names(VV))))
+
+  #Top20.ProbeId.vec <- GeneNameMap.vec[Top20.Name.vec]
+
+  # Put together in a matrix
+  Top20.varImp.mtx <- do.call('cbind', lapply(Set.ModelFit.Top20.lst,
+   function(LL) LL[Top20.Name.vec]))
+  rownames(Top20.varImp.mtx) <- Top20.Name.vec####GeneNameMap.vec[Top20.Name.vec]
+  Top20.varImp.mtx[is.na(Top20.varImp.mtx)] <- 0
+
+  # Reoder by ovrall importance
+  varImp.med.vec <- apply(Top20.varImp.mtx,1,median)
+  Top20.varImp.mtx <- Top20.varImp.mtx[rev(order(varImp.med.vec)),]
+
+
+  Top20.varImp.frm <- data.frame(ProteinGroup=rownames(Top20.varImp.mtx), 
+                                 round(Top20.varImp.mtx))
+  names(Top20.varImp.frm) <- sub('Fit', '', names(Top20.varImp.frm))
+
+
+
+SKIP <- function() {
+  # Add geneset membership
+  Top20Genes.vec <- sapply(strsplit(Top20.varImp.frm$Gene, split='\\.'),'[',1)
+
+  Top20GeneSetElements.frm <- data.frame(do.call('cbind', lapply(ProteinGroupSets.lst,
+  function(GS) ifelse(is.element(Top20Genes.vec, GS),'Y',''))))
+  colnames(Top20GeneSetElements.frm) <- names(ProteinGroupSets.lst)
+
+  Top20.varImp.frm <- data.frame(Top20.varImp.frm, Top20GeneSetElements.frm)
+}#SKIP
+
+ o.v <- rev(order(apply(Top20.varImp.frm[,sub('Fit','',names(Set.ModelFit.Top20.lst))],
+           1, mean)))
+
+ DT::datatable(Top20.varImp.frm[o.v,], rownames = FALSE)
+
+ #kable(Top20.varImp.frm[o.v,], align='c', row.names=F,
+   ##caption="Top 20 Features by Model") %>% 
+ #kableExtra::kable_styling(full_width = F)
+
+```
+
+<br/>
+
+# STOP HERE
+
+# References
+<div id="refs"></div>
+
+***
+# Parameter settings
+  * WRKDIR = `r WRKDIR`
+  * FN = `r FN`
+  * Scripts = Scripts
+  * RUN DATE = `r date()`
+
+```{r, echo=FALSE}
+ sessionInfo()
+```
+
+```{r, echo=FALSE}
+  knit_exit()
+```
+
+## Classification: Discussion
+
+
+### Nearest shrunken centroids does well
+
+The [nearest shrunken centriod](http://statweb.stanford.edu/~tibs/PAM/) 
+ method described in Tibshirani et. al. [Tibshirani:2002aa] does very well
+both in terms of classification accuracy, computing time and simplicity
+of predictor.  This has been our experience with many classification
+problems based on gene expression data.
+
+
+### Lack of agreement with literature gene sets
+
+The variable importance assessment shows that the genes which
+are deemed important in the clsssifiers the we fitted
+have little overlap with the gene sets previously identified
+as being associated with Early status.  Part of this lack of overlap
+is certanly due to the gene selection filter which we applied here
+for computing purposes.  This not a problem if we just want to
+build a classifier which predicts well.  It is somewhat of a problem 
+if we want to use biology to validate our empirically determined models.
+In that respect, the lack of agreement of gene lists across analyses
+is always a problem to contend with.
+
+### Models could be better optimized
+
+Note that we did not attempt to optimize the model tuning parameters in
+any way and just used the default search grids for each model.  While
+this may be a good choice on average, better performance could be
+obtained from some of the models by specifying a tuning parameter
+space which is better suited to the problem at hand.  This requires
+a good understanding of each model and is beyond the scope of this
+vignette.
+
+# Cluster Analysis
+
+In some cases one may be interested in discovering sugroups of samples within the sampled population
+which are more homogenious than the popolation as a whole.  Verhaak et. al. [@Verhaak:2010aa] describe
+an analysis pipeline for cluster discovery consisting of the following steps:  
+
+1. Data collection and integration
+2. Identification of gene-expression based sub-types by cluster analysis
+3. Marker gene signature identification
+4. Clustering validation and assessment of clinical significance
+
+In this section we will illustrate the cluster analysis step with two methods:  
+
+- Clustering based on partitioning around medoids (PAM) along with bootstrap aggregating (or Bagging).  
+- t-SNE
+
+The PAM algorithm for clustering is described in detail 
+in Kaufman and Rousseeuw [@Kaufmann:1990aa].  t-SNE is described 
+in [here](https://lvdmaaten.github.io/tsne/), with some
+illustrations [here](http://distill.pub/2016/misread-tsne/).
+
+We will treat the Early/MSI status of samples in our data set as unknown and see if the
+clustering algorithms can *discover* these hidden classes.  A more interesting problem
+on the biological pint of view would be to try to **discover** truly unknown subgroups
+within the Early and the MSI groups. 
+
+
+#### The PAM Clustering Algorithm {-}
+
+The PAM algorithm for clustering has some desirable attributes:  
+
+- the algorithm provides a way of estimating the number of clusters present in the data
+- each point is assigned to a cluster and a measure of strength or confidence in the cluster assignment is provided for each individual observation
+- cluster homogeneity can be assessed.  
+
+Underlying the PAM algorithm is a notion of similarity or proximity.  Basically, the PAM clustering algorithm sorts out a set of samples into subgroups such that within each subgroup, samples are more similar to other members of the subgroup than to samples assigned to other subgroups.  
+
+To define the notion of proximity, suppose the gene expression indicators are stored in a matrix $X$  with entries $x_{ij}$ being the gene expression indicator on log base 2 scale for sample i gene j.  Similarity among samples can be encapsulated by any of a number of measures of distance between the rows of the matrix $X$.
+Some common choices are the Euclidean distance (average coordinate squared difference), the Manhattan distance (average coordinate absolute difference), and a suitably transformed measure of correlation (2 – Pearson correlation, for example).  More generally, any weighted average of a coordinate specific measure of similarity can be used as a measure of sample similarity.  
+
+It is important to point out that for any fixed choice of distance quite different clustering results can be obtained depending on the selection of genes, or probe sets,  used to compute the sample to sample distances.  This is important to note because it is often necessary to apply a screen to subset genes or probe sets at the outset.  This is sometimes done to improve the computing efficiency of the analysis process.  Our experience with these data shows that if no screening is applied and all 50K+ probe sets are used to compute sample similarity measures, the clustering procedures are unable to detect even obvious structure in the data – the distinction between Early and MSI samples, for example.  In this analysis, we applied a fairly aggressive screen based on the overall data set variability of expression indicators.  It might be advisable to apply the variability constraint to **within data set variability** to avoid selecting probe sets that may have high overall variability due to between data set artifactual variation.  This wasn't done here.
+
+Having computed a distance or dissimilarity matrix, the PAM algorithm proceeds iteratively as follows:  
+
+1. For fixed k (pre-specified number of clusters), select k representative samples arbitrarily.  
+2. Each sample of the data set is assigned to the nearest medoid.   
+3. Update medoids by minimizing the objective function   
+Repeat steps 2-3 until there is no further change.
+
+To measure confidence in the cluster assignment for each sample, and to get a sense of cluster homogeneity, the notion of silhouette is used.  The silhouette score is a normalized score:
+        $$s_i = \frac{b_i – a_i}{max(a_i, b_i)}$$
+ where  
+
+- $a_i$ = average distance between sample i and all other samples within the cluster i is assigned to, and
+- $b_i$ = minimum average distance between sample i and  samples in other clusters.
+
+Individual clusters can be characterized by average silhouette width.  The clustering or partitioning of a dataset can be summarized by the overall average silhouette width and his can be used to select the number of clusters, k, that best describes the structure in the data set.
+
+<!-- 
+Multidimensional scaling can be used to get a two-dimensional representation of the sample data points such that distances on the dimensional plane are good approximations of the actual distances in the original gene space. The scatter-plot on the right panel of Figure F1 is an example of a two-dimensional representation of the sample data.  In the scatter-plot, cluster assignment is indicated by the plotting character.  The ellipses that overlay the scatter-plot are minimum area ellipsoids that contain all of the samples in each cluster.  
+--> 
+
+#### Bootstrap Aggregating of Clusters {-}
+
+The application of bagging to clustering is discussed in Dudoit and Fridlyand [@Dudoit:2003aa].  
+
+Bootstrap aggregation entails performing the clustering analysis repeatedly on bootstrap subsets of samples – sample sets resulting from randomly selecting samples from the original set of samples.  The clustering results for the bootstrap samples are then pooled, or aggregated, to produce the final clustering results.  Two methods of aggregation are proposed in Dudoit and Fridlyand [@Dudoit:2003aa].  One method (BagClust1) allocates samples to clusters according to a voting scheme.  The other method (BagClust2) uses the relative frequency across bootstrap samples with which sample pairs are clustered together as a new measure of distance which is then used by the PAM algorithm to cluster the samples.  In our exploration we have found the two approaches to give rise to comparable results.  We find the latter to be preferable as the distance matrix used for aggregating the bootstrap clustering results can be used like any other distance matrix to assess confidence in sample assignments and overall clustering homogeneity.  
+
+Alternative methods of bagging clusters exist.  
+[buster](https://github.com/SimonRaper/buster) is an R package which implements
+some form of bagging  of hierarchical clustering results.  Li [@Li:2011aa] 
+discusses a bagged clustering algorithm which is resistent to outliers and scalable.
+
+
+Clustering preliminaries - load data and set parameters.
+```{r m1a-clusterPrelim}
+
+ # Load Data
+ loadObj(paste0('Train.',SelProtGroups,'.vec'), 'SelProtGroups.vec')
+ 
+ load(file=file.path(WRKDIR, 'Data', 'Train.SelProtGroups.Expr.mtx'))
+ Train.SelProtGroups.Expr.mtx <- Train.SelProtGroups.Expr.mtx[, SelProtGroups.vec]
+ rm(Train.SelProtGroups.Expr.mtx)
+
+ load(file=file.path(WRKDIR, 'Data', 'Train.Label.vec'))
+ load(file=file.path(WRKDIR, 'Data', 'Train.DataSource.vec'))
+
+```
+
+#### Clustering Parmeters:  
+- SelProtGroups = `r SelProtGroups`
+- Distance Metric = `r DM`
+- Standardize = `r STAND`
+
+
+## PAM Clustering
+
+We start by performing a standard PAM cluster analysis of the data.
+To quantify the concordance between the discoverd clusters and the Early/MSI
+labels, we can compute [Cohen's Kappa](https://en.wikipedia.org/wiki/Cohen%27s_kappa).
+
+
+```{r m1a-pamCluster}
+ suppressMessages(require(stats))
+ suppressMessages(require(cluster))
+
+ Expr.mtx <- Train.SelProtGroups.Expr.mtx
+
+ # Standardize?
+ if(STAND) Expr.mtx <- scale(Expr.mtx)
+
+ # Get dissimilarity
+ {if(DM == "1-pearson")
+   Expr.dist <- as.dist(1-cor(t(Expr.mtx))) else
+   Expr.dist <- daisy(Expr.mtx, DM)
+ }
+
+ # get ave sil width for range of K
+ asw.vec <- sapply(2:5, function(kk) pam(Expr.dist, diss=T, k=kk)$silinfo$avg.width)
+ names(asw.vec) <- paste0('K_', 2:5)
+
+ print(round(asw.vec,3))
+
+``` 
+
+PAM returns the correct number of clusters, if we are trying to recover the Early/MSI
+subgroups.  Let us look at what the clustering looks like.
+
+```{r m1a-ViewPamCluster, fig.width=12, fig.height=12}
+###, results='hold'} this  r chunk option doesn't appear to work!
+ suppressMessages(require(cluster))
+ BestK <- as.numeric(sub('K_','', names(asw.vec)[which.max(asw.vec)]))
+
+ # Make sure Expr.dist hasn't changed!
+ Expr.pam <- pam(Expr.dist, k=BestK, keep.diss=T)
+
+ # Look at agreement with Early label
+ Pam.agree.tbl <- table(Expr.pam$clustering, Train.Label.vec)
+
+ # Compute kappa for display on figure
+ # (Only makes sense for BestK==2)
+ kappa.v <- NA
+ if(BestK == 2) kappa.v <- getKappa(Expr.pam$clustering, Train.Label.vec)
+
+ #######################################
+ # Visualization
+ #######################################
+ old_par <- par(mfrow=c(1,1), oma=c(8,1,5,1), #mar=c(4.2, 3.2, 1.1, 0.2),
+      #bg=rgb(0,0,.606),fg=7,col.axis=7,col.lab=7,col.main=7, col.sub=7,
+       cex.main=1.0,cex.lab=1.0,cex.axis=1.0)
+
+# DEBUG
+#save(Expr.pam, file=file.path(WRKDIR,'Data', 'Expr.pam'))
+#THIS DOEST WORK ANY MORE
+SKIP <- function() {
+   plot(Expr.pam,main='')
+   mtext2by2Tbl(Pam.agree.tbl)
+}# SKIP
+
+ ###################################
+ clusplot(Expr.pam, main='')###, pch=DataSource.pch)
+
+ ### Recolor samples according to Early/MSI status
+ #xD <- eval(Expr.pam$call[[2]])
+ xD <- Expr.pam$diss
+ x1 <- cmdscale(xD, k=2, eig=T, add=T)
+ if(x1$ac < 0)
+    x1 <- cmdscale(xD, k=2, eig=T)
+ #var.dec <- x1$GOF[2]
+ x1 <- x1$points
+
+ points(x1[,1][Train.Label.vec=='MSI'], x1[,2][Train.Label.vec=='MSI'],
+         pch='.',cex=3, col='red')
+ # add 2x2 tbale in margin
+ mtext2by2Tbl(Pam.agree.tbl)
+
+ title(paste('Red dot = MSI samples',
+  '\nAve. Sil. Width = ', round(Expr.pam$silinfo$avg.width,3),
+  '  Kappa = ', round(kappa.v,3)))
+ 
+ par(old_par)
+
+```
+
+Although the Early and MSI somewhat colocate on the
+two dimensional projection of their gene expression vectors, one would be hard-pressed
+to make the case that clusters exist in these data.
+Next we'll see if bootstrap aggregation helps.
+
+## Bootstrap Aggregation of Clusters
+
+Next we will implement the baaged clustering procedure, BagClust2:
+
+For a fixed number of clusters K:  
+
+1. Initialize matrices $A_{nxn}$ and $M_{nxn}$ to zeroes.  
+
+Repeat 2-4 N_BOOT times:  
+
+	2. Form the $b^{th}$ bootstrap sample, Bt_Samp
+	3. Cluster Bt_Samp to obtain cluster labels Bt_Clust
+	4. For each pair of samples in Bt_Samp, s1, s2
+		- increment $M_{s1,s1}$
+		- increment $A_{s1,s1}$ if s1 and s2 co-cluster in the $b^{th}$ bootstarp sample.  
+end repeat.
+
+5. Define a new dissimilarity matrix $D = 1 - A/M$
+6. Cluster samples on the basis of this dissimilarity matrix.
+
+```{r m1a-BagClust2, cache=T, cache.vars=''}
+ suppressMessages(require(cluster))
+ suppressMessages(require(stats))
+
+ N_BOOT <- 30
+
+ # initialize list to store BagCLust results
+ SelProtGroups.BagClust.pam.lst <- list()
+ 
+ for(KK in 2:5) {
+  # Initialize counting matrices
+  A.mtx <- matrix(0, ncol=length(Train.Label.vec),
+                     nrow=length(Train.Label.vec))
+  rownames(A.mtx) <- names(Train.Label.vec)
+  colnames(A.mtx) <- names(Train.Label.vec)
+
+  M.mtx <- matrix(0, ncol=length(Train.Label.vec),
+                     nrow=length(Train.Label.vec))
+  rownames(M.mtx) <- names(Train.Label.vec)
+  colnames(M.mtx) <- names(Train.Label.vec)
+
+
+  # Repeat 2-4 B times
+  # 2. Form the b_th bootstrap sample Bt_Samp =
+  #       sample(Samp.vec, size=N_Samp, replace=T)
+  # 3. Cluster to obtain cluster labels Bt_Clust for samples in Bt_Samp
+  # 4. For each pair of samples in Bt_Samp, s1, s2,
+  #     - increment M[s1,s2]
+  #     - increment A[s1,s1] if Bt_Clust[s1] == Bt_Clust[2]
+  # end repeat
+  for(BB in 1:N_BOOT){
+   cat('.')
+   # 2. form the BS sample
+   B_Samp <- sample(names(Train.Label.vec), size=length(Train.Label.vec), replace=T)
+
+   Expr.B.mtx <- Expr.mtx[B_Samp,]
+
+   # Get dissimilarity
+   {if(DM == "1-pearson")
+     Expr.B.dist <- as.dist(1-cor(t(Expr.B.mtx))) else
+     Expr.B.dist <- daisy(Expr.B.mtx, DM)
+   }
+   rm(Expr.B.mtx)
+
+   # 3. cluster
+   Expr.B.pam <- pam(Expr.B.dist, k=KK)
+
+   # 4. For each pair of samples in Bt_Samp, s1, s2,
+   #     - increment M[s1,s2]
+   #     - increment A[s1,s1] if Bt_Clust[s1] == Bt_Clust[2]
+   B_Samp.lst <- unique(B_Samp)
+
+   M.mtx[B_Samp.lst, B_Samp.lst] <-   M.mtx[B_Samp.lst, B_Samp.lst] + 1
+
+   # patition in list
+   B_Samp.Cluster <- Expr.B.pam$clustering[B_Samp.lst]
+   B_Samp.Clust.lst <- split(B_Samp.lst, B_Samp.Cluster)
+
+   for(LL in 1:length(B_Samp.Clust.lst)) {
+    Clust.Samp <- B_Samp.Clust.lst[[LL]]
+    A.mtx[Clust.Samp, Clust.Samp] <-   A.mtx[Clust.Samp, Clust.Samp] + 1
+   }
+  } # end BB loop
+  cat('\n')
+
+  # 5. Define new dissimilariy matirx D = 1 - A/M
+  D.mtx <- A.mtx/M.mtx
+  D.mtx[is.na(D.mtx)] <- 0
+ 
+  # 6. Cluster observations on the basis of this dissimilarity matrix
+  D.dist <- as.dist(1-D.mtx)
+  SelProtGroups.BagClust.pam.lst[[paste0('K_',KK)]] <- pam(D.dist, k=KK, keep.diss=T)
+  cat('KK =',KK, '   sil.avg.width =', SelProtGroups.BagClust.pam.lst[[paste0('K_',KK)]]$silinfo$avg.width, '\n')
+ }#for(KK
+
+ ## save 
+ saveObj(paste0(SelProtGroups, '.BagClust.pam.lst'), 'SelProtGroups.BagClust.pam.lst')
+
+```
+<!-- ****************************************************************** -->
+
+```{r m1a-lkBagClust2, fig.height=12, fig.width=12}
+ suppressMessages(require(cluster))
+
+ loadObj(paste0(SelProtGroups, '.BagClust.pam.lst'), 'SelProtGroups.BagClust.pam.lst')
+
+ # Get best K model
+ BagClustBestK <- names(SelProtGroups.BagClust.pam.lst)[which.max(sapply(SelProtGroups.BagClust.pam.lst,
+  function(x) x$silinfo$avg.width))]
+
+ BagClustBestK.pam <- SelProtGroups.BagClust.pam.lst[[BagClustBestK]]
+
+ # Get agreement table
+ BagClustBestK.pam.agree.tbl <- table(BagClustBestK.pam$clustering, Train.Label.vec)
+
+ #Compute kappa for display on figure
+ # (Only makes sense for KK==2)
+ if(BagClustBestK == paste0('K_',2)) 
+ kappa.v <- getKappa(BagClustBestK.pam$clustering, Train.Label.vec)
+ #cat('kappa =', kappa.v, '\n')
+
+ #######################################
+ # Visualization
+ #######################################
+ old_par <- par(mfrow=c(1,1), oma=c(8,1,5,1), #mar=c(4.2, 3.2, 1.1, 0.2),
+      #bg=rgb(0,0,.606),fg=7,col.axis=7,col.lab=7,col.main=7, col.sub=7,
+       cex.main=1.0,cex.lab=1.0,cex.axis=1.0)
+
+ #plot(BagClustBestK.pam,main='')
+
+ clusplot(BagClustBestK.pam, main='')###, pch=DataSource.pch)
+
+ ### Recolor samples according to Early/MSI status
+ #xD <- eval(BagClustBestK.pam$call[[2]])
+ xD <- BagClustBestK.pam$diss
+ x1 <- cmdscale(xD, k=2, eig=T, add=T)
+ if(x1$ac < 0)
+    x1 <- cmdscale(xD, k=2, eig=T)
+ #var.dec <- x1$GOF[2]
+ x1 <- x1$points
+
+ points(x1[,1][Train.Label.vec=='MSI'], x1[,2][Train.Label.vec=='MSI'],
+         pch='.',cex=3, col='red')
+
+ # add 2x2 tbale in margin
+ mtext2by2Tbl(BagClustBestK.pam.agree.tbl)
+
+ title(paste('Red dot = MSI samples',
+  '\nAve. Sil. Width = ', round(BagClustBestK.pam$silinfo$avg.width,3),
+  '  Kappa = ', round(kappa.v,3)))
+
+
+ par(old_par)
+ 
+```
+
+The groupings discovered by BagClust2 are essentially the same as those discovered
+by the PAM cluster analysis.  The main effect of the bagging is to reduce noise and 
+provide better separation between groups, which greatly increases our confidence in the
+groupings. 
+
+Next we look at the application of t-SNE algorithm to this problem.
+
+## t-SNE
+
+t-SNE is a dimensionality reduction techique that is particularly well suited for the 
+visualization of high-dimensional datasets.  Here we will use the t-SNE algorithm to 
+reduce the gene expression data martrix to a few dimensions.  These will then be 
+used as inputs to some clustering algorithm for the purpose of discovering subgroups
+in the data.  Here we will assess the benefit of the t-SNE embedding by repeating the
+cluster analysis above - PAM and BagClust2 clustering - using the t-SNE embedding as input
+instead of the scales expression matrix.
+
+
+```{r m1a-tSNEPrelim}
+ # Load Data
+ loadObj(paste0('Train.',SelProtGroups,'.vec'), 'SelProtGroups.vec')
+ 
+ load(file=file.path(WRKDIR, 'Data', 'Train.SelProtGroups.Expr.mtx'))
+ Train.SelProtGroups.Expr.mtx <- Train.SelProtGroups.Expr.mtx[, SelProtGroups.vec]
+ rm(Train.SelProtGroups.Expr.mtx)
+
+ load(file=file.path(WRKDIR, 'Data', 'Train.Label.vec'))
+ load(file=file.path(WRKDIR, 'Data', 'Train.DataSource.vec'))
+
+```
+
+```{r m1a-tSNE, cache=T, cache.vars=''}
+
+ suppressMessages(require(Rtsne))
+ PERP <- 50
+ SelProtGroups.tsne.lst <- list()
+
+ for(DD in c(2,5,10))
+  SelProtGroups.tsne.lst[[paste0('D_', DD)]] <- 
+  Rtsne(Train.SelProtGroups.Expr.mtx, check_duplicates=FALSE, 
+        pca=TRUE, pca_center=T, pca_scale=T,
+        perplexity=PERP, theta=0.0, dims=DD, max_iter = 5000)
+  
+ saveObj(paste0(SelProtGroups, '.tsne.lst'), 'SelProtGroups.tsne.lst')
+```
+
+### t-SNE + PAM
+
+```{r m1a-tsnePAMCluster} 
+ suppressMessages(require(stats))
+ suppressMessages(require(cluster))
+
+ loadObj(paste0(SelProtGroups, '.tsne.lst'), 'SelProtGroups.tsne.lst')
+
+
+ tsne.asw.mtx <- do.call('rbind', lapply(names(SelProtGroups.tsne.lst),
+ function(DD) {
+  Expr.mtx <- SelProtGroups.tsne.lst[[DD]]$Y
+
+  # Standardize?
+  #if(STAND) Expr.mtx <- scale(Expr.mtx)
+
+  # Get dissimilarity
+  {if(DM == "1-pearson")
+    Expr.dist <- as.dist(1-cor(t(Expr.mtx))) else
+    Expr.dist <- daisy(Expr.mtx, DM)
+  }
+
+  # get ave sil width for range of K
+  asw.vec <- sapply(2:5, function(kk) pam(Expr.dist, diss=T, k=kk)$silinfo$avg.width)
+  names(asw.vec) <- paste0('K_', 2:5)
+
+  asw.vec}))
+  rownames(tsne.asw.mtx) <- names(SelProtGroups.tsne.lst)
+
+  print(round(tsne.asw.mtx,3))
+
+``` 
+
+PAM clustering based on t-SNE embeddings of various dimensions does not
+return  allow us to discriminate among the number of clusters based on average
+silhouette width.  Let's see what the 2-D scatters look like 
+as well as the PAM clustering into two groups.
+
+```{r m1a-ViewTsnePamCluster, fig.width=12, fig.height=12, results='hold'}
+ suppressMessages(require(cluster))
+ loadObj(paste0(SelProtGroups, '.tsne.lst'), 'SelProtGroups.tsne.lst')
+
+ for(DD in names(SelProtGroups.tsne.lst)){
+  Expr.mtx <- SelProtGroups.tsne.lst[[DD]]$Y
+
+  # Standardize?
+  #if(STAND) Expr.mtx <- scale(Expr.mtx)
+
+  # Get dissimilarity
+  {if(DM == "1-pearson")
+    Expr.dist <- as.dist(1-cor(t(Expr.mtx))) else
+    Expr.dist <- daisy(Expr.mtx, DM)
+  }
+
+  #for(KK in 2:5) {
+  KK <- 2
+  Expr.pam <- pam(Expr.dist, diss=T, k=KK, keep.diss=T)
+  Pam.agree.tbl <- table(Expr.pam$clustering, Train.Label.vec)
+  kappa.v <- getKappa(Expr.pam$clustering, Train.Label.vec)
+ 
+  #######################################
+  # Visualization
+  #######################################
+  old_par <- par(mfrow=c(1,1), oma=c(8,1,5,1), #mar=c(4.2, 3.2, 1.1, 0.2),
+      #bg=rgb(0,0,.606),fg=7,col.axis=7,col.lab=7,col.main=7, col.sub=7,
+       cex.main=1.0,cex.lab=1.0,cex.axis=1.0)
+
+  #plot(Expr.pam,main='')
+
+  ###################################
+  clusplot(Expr.pam, main='')###, pch=DataSource.pch)
+
+  ### Recolor samples according to Early/MSI status
+  #xD <- eval(Expr.pam$call[[2]])
+  xD <- Expr.pam$diss
+  x1 <- cmdscale(xD, k=2, eig=T, add=T)
+  if(x1$ac < 0)
+     x1 <- cmdscale(xD, k=2, eig=T)
+  #var.dec <- x1$GOF[2]
+  x1 <- x1$points
+ 
+  points(x1[,1][Train.Label.vec=='MSI'], x1[,2][Train.Label.vec=='MSI'],
+          pch='.',cex=3, col='red')
+
+  # add 2x2 tbale in margin
+  mtext2by2Tbl(Pam.agree.tbl)
+
+ title(paste('Dim =', DD, ' - Red dot = MSI samples',
+  '\nAve. Sil. Width = ', round(Expr.pam$silinfo$avg.width,3),
+  '  Kappa = ', round(kappa.v,3)))
+
+  par(old_par)
+
+ }#for(DD
+
+```
+
+PAM applied to t-SNE embeddings produce larger silhuoette profiles than
+PAM applied to the gene expression data.  Let's see how bagging helps here.
+
+### t-SNE + BagClust2
+
+An important parameter in the application of t-SNE to clustering is the
+number of dimensions used in the t-SNE embedding.  We will assess the effect of 
+this parameter here, keeping the specified number of clusters fixed at k=2 while
+varying the number of embedding dimensions.
+
+```{r m1a-tsneBagClust2, cache=T, cache.vars=''}
+ suppressMessages(require(cluster))
+ suppressMessages(require(stats))
+
+ KK <- 2
+
+ loadObj(paste0(SelProtGroups, '.tsne.lst'), 'SelProtGroups.tsne.lst')
+ load(file=file.path(WRKDIR, 'Data', 'Train.Label.vec'))
+
+ N_BOOT <- 30
+
+ # initialize list to store BagCLust results
+ SelProtGroups.tsneBagClust.pam.lst <- list()
+ 
+ for(DD in names(SelProtGroups.tsne.lst)){
+  Expr.mtx <- SelProtGroups.tsne.lst[[DD]]$Y
+ 
+  # Add rownames (assuming order is correct!)
+  rownames(Expr.mtx) <- names(Train.Label.vec)
+
+  # Initialize counting matrices
+  A.mtx <- matrix(0, ncol=length(Train.Label.vec),
+                     nrow=length(Train.Label.vec))
+  rownames(A.mtx) <- names(Train.Label.vec)
+  colnames(A.mtx) <- names(Train.Label.vec)
+
+  M.mtx <- matrix(0, ncol=length(Train.Label.vec),
+                     nrow=length(Train.Label.vec))
+  rownames(M.mtx) <- names(Train.Label.vec)
+  colnames(M.mtx) <- names(Train.Label.vec)
+
+
+  # Repeat 2-4 B times
+  # 2. Form the b_th bootstrap sample Bt_Samp =
+  #       sample(Samp.vec, size=N_Samp, replace=T)
+  # 3. Cluster to obtain cluster labels Bt_Clust for samples in Bt_Samp
+  # 4. For each pair of samples in Bt_Samp, s1, s2,
+  #     - increment M[s1,s2]
+  #     - increment A[s1,s1] if Bt_Clust[s1] == Bt_Clust[2]
+  # end repeat
+  for(BB in 1:N_BOOT){
+   cat('.')
+   # 2. form the BS sample
+   B_Samp <- sample(names(Train.Label.vec), size=length(Train.Label.vec), replace=T)
+
+   Expr.B.mtx <- Expr.mtx[B_Samp,]
+
+   # Get dissimilarity
+   {if(DM == "1-pearson")
+     Expr.B.dist <- as.dist(1-cor(t(Expr.B.mtx))) else
+     Expr.B.dist <- daisy(Expr.B.mtx, DM)
+   }
+   rm(Expr.B.mtx)
+
+   # 3. cluster
+   Expr.B.pam <- pam(Expr.B.dist, k=KK)
+
+   # 4. For each pair of samples in Bt_Samp, s1, s2,
+   #     - increment M[s1,s2]
+   #     - increment A[s1,s1] if Bt_Clust[s1] == Bt_Clust[2]
+   B_Samp.lst <- unique(B_Samp)
+
+   M.mtx[B_Samp.lst, B_Samp.lst] <-   M.mtx[B_Samp.lst, B_Samp.lst] + 1
+
+   # patition in list
+   B_Samp.Cluster <- Expr.B.pam$clustering[B_Samp.lst]
+   B_Samp.Clust.lst <- split(B_Samp.lst, B_Samp.Cluster)
+
+   for(LL in 1:length(B_Samp.Clust.lst)) {
+    Clust.Samp <- B_Samp.Clust.lst[[LL]]
+    A.mtx[Clust.Samp, Clust.Samp] <-   A.mtx[Clust.Samp, Clust.Samp] + 1
+   }
+  } # end BB loop
+  cat('\n')
+
+  # 5. Define new dissimilariy matirx D = 1 - A/M
+  D.mtx <- A.mtx/M.mtx
+  D.mtx[is.na(D.mtx)] <- 0
+ 
+  # 6. Cluster observations on the basis of this dissimilarity matrix
+  D.dist <- as.dist(1-D.mtx)
+  SelProtGroups.tsneBagClust.pam.lst[[DD]] <- pam(D.dist, k=KK, keep.diss=T)
+  cat('DD =',DD, '   sil.avg.width =', SelProtGroups.tsneBagClust.pam.lst[[DD]]$silinfo$avg.width, '\n')
+
+ }#for(DD
+
+ ## save 
+ saveObj(paste0(SelProtGroups, '.tsneBagClust.pam.lst'), 'SelProtGroups.tsneBagClust.pam.lst')
+
+```
+<!-- ****************************************************************** -->
+
+```{r m1a-lktsneBagClust2, fig.height=12, fig.width=12}
+ suppressMessages(require(cluster))
+
+ loadObj(paste0(SelProtGroups, '.tsneBagClust.pam.lst'), 'SelProtGroups.tsneBagClust.pam.lst')
+ load(file=file.path(WRKDIR, 'Data', 'Train.Label.vec'))
+
+ # Get best K model
+ BagClustBestD <- names(SelProtGroups.tsneBagClust.pam.lst)[which.max(sapply(SelProtGroups.tsneBagClust.pam.lst,
+  function(x) x$silinfo$avg.width))]
+
+ BagClustBestD.pam <- SelProtGroups.tsneBagClust.pam.lst[[BagClustBestD]]
+
+ # Get agreement table
+ BagClustBestD.pam.agree.tbl <- table(BagClustBestD.pam$clustering, Train.Label.vec)
+
+ #Compute kappa for display on figure
+ # (Only makes sense for KK==2)
+ kappa.v <- getKappa(BagClustBestD.pam$clustering, Train.Label.vec)
+ #cat('kappa =', kappa.v, '\n')
+
+ #######################################
+ # Visualization
+ #######################################
+ old_par <- par(mfrow=c(1,1), oma=c(8,1,5,1), #mar=c(4.2, 3.2, 1.1, 0.2),
+      #bg=rgb(0,0,.606),fg=7,col.axis=7,col.lab=7,col.main=7, col.sub=7,
+       cex.main=1.0,cex.lab=1.0,cex.axis=1.0)
+
+ #plot(BagClustBestD.pam,main='')
+
+ ###################################
+ clusplot(BagClustBestD.pam, main='')###, pch=DataSource.pch)
+
+ ### Recolor samples according to Early/MSI status
+ #xD <- eval(BagClustBestD.pam$call[[2]])
+ xD <- BagClustBestD.pam$diss
+ x1 <- cmdscale(xD, k=2, eig=T, add=T)
+ if(x1$ac < 0)
+    x1 <- cmdscale(xD, k=2, eig=T)
+ #var.dec <- x1$GOF[2]
+ x1 <- x1$points
+
+ points(x1[,1][Train.Label.vec=='MSI'], x1[,2][Train.Label.vec=='MSI'],
+         pch='.',cex=3, col='red')
+  # add 2x2 tbale in margin
+  mtext2by2Tbl(BagClustBestD.pam.agree.tbl)
+
+ title(paste('Dim =', BagClustBestD, ' - Red dot = MSI samples',
+  '\nAve. Sil. Width = ', round(BagClustBestD.pam$silinfo$avg.width,3),
+  '  Kappa = ', round(kappa.v,3)))
+
+ par(old_par)
+ 
+```
+
+## Cluster Analysis: Discussion
+
+- The PAM algorithm does a decent job at "discovering" the Early vs MSI grouping
+in an unsupervised analysis of the gene expression vectors.  In this analysis,
+we restricted the analysis to the `r SelProtGroups` gene set.  A different gene selection
+might give rise to sligthly different results.  
+
+- Bootstrap aggregation of PAM clustering results leads to cleaner separation
+among the groups but very little difference in the allocation of samples to groups.  This
+is as expected.  Bagging in thise case is a noise reduction measure.
+
+- Applying the t-SNE algorithm to extract low dimensional embeddings of the gene expression
+vectors and applying the PAM algorthim to these data leads to some improved clustering
+results: separation of the groups is larger than is the results of applying PAM directly 
+to the gene expression data.
+
+- Bootstrap aggregation of results of applying PAM clustering to t-SNE embeddings
+leads to improved separation between groups and a slight improvement in the coherence
+between clusters and Early vs MSI labels.
+
+
+It appears that both t-SNE embeddings and bootstrap aggregation are helpful
+in producing better separated clusters in this context.  We have only skimmed 
+the surface of cluster analysis of gene expression data in this vignette.
+We did not look at the propensity of the different approaches to produce 
+fals positive results - the appearance of clusters when non exist. 
+We also did not investigate the effect of the choice of value for the many parameters
+that can be adjusted in these analyses.  In any given situation, the sensitivity
+of results produced  by a method to changes in parameter settings or
+slight perturbations of the data is an important part of cluster analysis.
+
+## Next Step: Look for subgroups in the Early population - an open biological question.
+
+
+<!-- Put bib here If applicable -->
+***
+# References
+<div id="refs"></div>
+
+***
+# Parameter settings
+  * WRKDIR = `r WRKDIR`
+  * FN = `r FN`
+  * Scripts = Scripts
+  * RUN DATE = `r date()`
+
+```{r, echo=FALSE}
+ sessionInfo()
+```
+
+```{r, echo=FALSE}
+  knit_exit()
+```
+
+### ARCHIVAL CODE BELOW
+
+
+<!-- To run
+# nohup Rscript -e "knitr::knit2html('_M1A-exploreDELFI.Rmd')" > _M1A-exploreDELFI.log  &
+
+# Or
+# nohup Rscript -e "rmarkdown::render('_M1A-exploreDELFI.Rmd')" > _M1A-exploreDELFI.log  &
+
+-->
+

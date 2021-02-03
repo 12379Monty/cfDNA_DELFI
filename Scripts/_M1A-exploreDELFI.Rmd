@@ -180,9 +180,7 @@ TBD
 
 # Read in data
 
-
-```{r m1a-readSampDesc, eval=T, cache=T, cache.vars=c('DD', 'DD.sampDesc.frm'),warning=F}
-
+```{r m1a-read-table-decr}
 DD <- 'Cristiano'
 
 # Sample meta data
@@ -198,7 +196,12 @@ function(SHEET) readxl::read_xlsx(DD_META_FILE, sheet=SHEET, n_max=1)[1,1]))
 cat("Sheets found in", DD_META_FILE, '\n')
 names(DD.metaSheetsHdr.vec)
 
-cat("Proceed to read", names(DD.metaSheetsHdr.vec)[1],'\n')
+```
+
+## read `r names(DD.metaSheetsHdr.vec)[1]`
+
+
+```{r m1a-readSampDesc, eval=T, cache=T, cache.vars=c('DD', 'DD.sampDesc.frm'),warning=F}
 DD.sampDesc.frm <- as.data.frame(
  readxl::read_xlsx(DD_META_FILE, sheet=DD.metaSheets.vec[1], skip=1))
 
@@ -235,6 +238,8 @@ o.v <- with(DD.sampDesc.frm, order(GroupF, Gender, Age))
 DD.sampDesc.frm <- DD.sampDesc.frm[o.v,]
 
 saveObj(paste0(DD, '.sampDesc.frm'), 'DD.sampDesc.frm')
+
+DT::datatable(DD.sampDesc.frm)
 
 ```
 
@@ -349,6 +354,52 @@ text(x=1:length(cfDNA_Input.lst), y=rep(0.5, length(cfDNA_Input.lst)),
 
 <br/>
 
+### UP TO HERE
+
+## read `r names(DD.metaSheetsHdr.vec)[3]`
+
+
+```{r m1a-readTargFragCancer, eval=T, cache=T, cache.vars=c('DD.targFragCancer.frm'),warning=F}
+DD.targFragCancer.frm <- as.data.frame(
+ readxl::read_xlsx(DD_META_FILE, sheet=DD.metaSheets.vec[3], skip=1))
+
+names(DD.targFragCancer.frm) <- 
+sub("Patient Type", "patientType",
+sub("Sample Type", "sampleType",
+sub("Age at Diagnosis", "Age",
+sub("TNM Staging", "TMM_Staging",                            
+sub("Site of Primary Tumor", "primarySite",                  
+sub("Histopathological Diagnosis", "histoDx",            
+sub("Degree of Differentiation", "degDiff",              
+sub("Location of Metastases at Diagnosis", "metLoc",
+sub("Volume of Plasma \\(ml\\)", "plasmaVol",                  
+sub("cfDNA Extracted \\(ng/ml\\)", "cfDNA_Extracted",                
+sub("cfDNA Input \\(ng/ml\\)", "cfDNA_Input",                    
+sub("Whole Genome Fragment Profile  Analysis", "WGFP",
+sub("Targeted Fragment Profile Analysis", "TGFP",     
+sub("Targeted Mutation Analysis", "TGMT",
+names(DD.sampDesc.frm)))))))))))))))
+
+DD.sampDesc.frm$Age <- as.numeric(DD.sampDesc.frm$Age)
+DD.sampDesc.frm$plasmaVol <- as.numeric(DD.sampDesc.frm$plasmaVol)
+DD.sampDesc.frm$cfDNA_Extracted <- as.numeric(DD.sampDesc.frm$cfDNA_Extracted)
+DD.sampDesc.frm$cfDNA_Input <- as.numeric(DD.sampDesc.frm$cfDNA_Input)
+
+DD.sampDesc.frm$Group <- sapply(strsplit(DD.sampDesc.frm$patientType, 
+   split=' '), '[', 1)
+
+DD.sampDesc.frm$GroupF <- factor(DD.sampDesc.frm$Group,
+  levels=c("Healthy", setdiff(sort(unique(DD.sampDesc.frm$Group)), "Healthy")))
+
+# Order by Group, gender, age
+o.v <- with(DD.sampDesc.frm, order(GroupF, Gender, Age))
+DD.sampDesc.frm <- DD.sampDesc.frm[o.v,]
+
+saveObj(paste0(DD, '.sampDesc.frm'), 'DD.sampDesc.frm')
+
+DT::datatable(DD.sampDesc.frm)
+
+```
 
 
 # STOP HERE

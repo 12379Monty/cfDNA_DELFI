@@ -360,9 +360,14 @@ text(x=1:length(cfDNA_Input.lst), y=rep(0.5, length(cfDNA_Input.lst)),
 
 ## read `r names(DD.metaSheetsHdr.vec)[4]`
 
+Note: We had to separate 
+`r names(DD.metaSheetsHdr.vec)[3]` into
+`r names(DD.metaSheetsHdr.vec)[4]` and
+`r names(DD.metaSheetsHdr.vec)[5]` to simplify reading in
+the data.  Here we read the two separately and then 
+recomine them.
 
-
-```{r m1a-readTargFragWt, eval=T, cache=T, cache.vars=c('DD.targFragWt.frm'),warning=F}
+```{r m1a-readTargFragWt, eval=T, cache=T, cache.vars=c('DD.targFragWt.frm'),warning=F} 
 
 DD.targFragWt.frm <- as.data.frame(
  readxl::read_xlsx(DD_META_FILE, sheet=DD.metaSheets.vec[4], skip=1))
@@ -376,98 +381,209 @@ sub( "Mutation Type", "mtType",
 sub( "Hotspot Alteration", "hotspotAlt", 
 sub( "Alteration Detected in Tissue", "altDetectTissue",
 sub( "Mutant Allele Fraction", "mtAllFrac",
-sub( "Distinct Coverage", "distinctCov",
-sub( "Minimum cfDNA Fragment Size \\(bp\\)", "fragSizeMin",
-sub( "25th Percentile cfDNA Fragment Size \\(bp\\)", "fragSizeQ1",
-sub( "Mode cfDNA Fragment Size \\(bp\\)", "fragSizeMode",
-sub( "Median cfDNA Fragment Size \\(bp\\)", "fragSizeMedian",
-sub( "Mean cfDNA Fragment Size \\(bp\\)", "fragSizeMean",
-sub( "75th Percentile cfDNA Fragment Size \\(bp\\)", "fragSizeQ3",
-sub( "Maximum cfDNA Fragment Size \\(bp\\)", "fragSizeMax",
+sub( "Distinct Coverage", "WtDistinctCov",
+sub( "Minimum cfDNA Fragment Size \\(bp\\)", "WtFragSizeMin",
+sub( "25th Percentile cfDNA Fragment Size \\(bp\\)", "WtFragSizeQ1",
+sub( "Mode cfDNA Fragment Size \\(bp\\)", "WtFragSizeMode",
+sub( "Median cfDNA Fragment Size \\(bp\\)", "WtFragSizeMedian",
+sub( "Mean cfDNA Fragment Size \\(bp\\)", "WtFragSizeMean",
+sub( "75th Percentile cfDNA Fragment Size \\(bp\\)", "WtFragSizeQ3",
+sub( "Maximum cfDNA Fragment Size \\(bp\\)", "WtFragSizeMax",
 sub( "Difference between Median Mutant and Wild-type cfDNA Fragment Sizes \\(bp\\)", "diffMedianSizeMtWt",
 sub( "Difference between Mean Mutant and Wild-type cfDNA Fragment Sizes \\(bp\\)", "diffMeanSizeMtWt",
 sub( "Adjusted P Value of Difference between Mutant and Wild-type cfDNA Fragment Sizes", "adjPvalue",
 names(DD.targFragWt.frm)))))))))))))))))))) 
 
 
-str(DD.targFragWt.frm)
 
 DD.targFragWt.frm$Group <- sapply(strsplit(DD.targFragWt.frm$patientType, 
    split=' '), '[', 1)
-
-
-# samples per Patient
-tmp.tbl <- with(DD.targFragWt.frm, table(table(Patient)))
-tmp.frm <- data.frame(N_Patient=as.vector(tmp.tbl), Count=names(tmp.tbl))
-knitr::kable(tmp.frm,
- caption="Number of samples per Patient") %>%
- kableExtra::kable_styling(full_width = F)
 
 DD.targFragWt.frm$GroupF <- factor(DD.targFragWt.frm$Group)
 ## No Healthy here
   #levels=c("Healthy", setdiff(sort(unique(DD.targFragWt.frm$Group)), "Healthy")))
 
-with(DD.targFragWt.frm, table(GroupF))
+
+```
+
+## read `r names(DD.metaSheetsHdr.vec)[5]`
+
+
+
+```{r m1a-readTargFragMt, eval=T, cache=T, cache.vars=c('DD.targFragMt.frm'),warning=F,include=F} 
+
+DD.targFragMt.frm <- as.data.frame(
+ readxl::read_xlsx(DD_META_FILE, sheet=DD.metaSheets.vec[5], skip=1))
+
+names(DD.targFragMt.frm) <-
+sub( "Patient Type", "patientType",
+sub( "Stage at Diagnosis", "stageAtDx",
+sub( "Alteration Type", "altType",
+sub( "Amino Acid \\(Protein\\)", "aminoAcid",
+sub( "Mutation Type", "mtType",
+sub( "Hotspot Alteration", "hotspotAlt",
+sub( "Alteration Detected in Tissue", "altDetectTissue",
+sub( "Mutant Allele Fraction", "mtAllFrac",
+sub( "Distinct Coverage", "MtDistinctCov",
+sub( "Minimum cfDNA Fragment Size \\(bp\\)", "MtFragSizeMin",
+sub( "25th Percentile cfDNA Fragment Size \\(bp\\)", "MtFragSizeQ1",
+sub( "Mode cfDNA Fragment Size \\(bp\\)", "MtFragSizeMode",
+sub( "Median cfDNA Fragment Size \\(bp\\)", "MtFragSizeMedian",
+sub( "Mean cfDNA Fragment Size \\(bp\\)", "MtFragSizeMean",
+sub( "75th Percentile cfDNA Fragment Size \\(bp\\)", "MtFragSizeQ3",
+sub( "Maximum cfDNA Fragment Size \\(bp\\)", "MtFragSizeMax",
+sub( "Difference between Median Mutant and Wild-type cfDNA Fragment Sizes \\(bp\\)", "diffMedianSizeMtWt",
+sub( "Difference between Mean Mutant and Wild-type cfDNA Fragment Sizes \\(bp\\)", "diffMeanSizeMtWt",
+sub( "Adjusted P Value of Difference between Mutant and Wild-type cfDNA Fragment Sizes", "adjPvalue",
+names(DD.targFragMt.frm))))))))))))))))))))
+
+
+DD.targFragMt.frm$Group <- sapply(strsplit(DD.targFragWt.frm$patientType, 
+   split=' '), '[', 1)
+DD.targFragMt.frm$GroupF <- factor(DD.targFragMt.frm$Group)
+
+
+```
+
+Merge DD.targFragWt.frm and DD.targFragMt.frm
+
+
+```{r m1a-mergeTargFragWtMt, eval=T, cache=T, cache.vars=c('DD.targFragWtMt.frm'),warning=F,fig.cap="Wild-type and Mutant Fragments Data",include=T} 
+
+DD.targFragWtMt.frm <- merge(DD.targFragWt.frm,DD.targFragMt.frm)
+
+with(DD.targFragWtMt.frm, table(GroupF))
+
+# samples per Patient
+tmp.tbl <- with(DD.targFragWtMt.frm, table(table(Patient)))
+tmp.frm <- data.frame(N_Patient=as.vector(tmp.tbl), Count=names(tmp.tbl))
+knitr::kable(tmp.frm,
+ caption="Number of samples per Patient") %>%
+ kableExtra::kable_styling(full_width = F)
+
 
 cat("samples per Patient by Group\n")
-lapply(split(DD.targFragWt.frm, DD.targFragWt.frm$Group), 
-function(GRP.targFragWt.frm) {
-tmp.tbl <- with(GRP.targFragWt.frm, table(table(Patient)))
+lapply(split(DD.targFragWtMt.frm, DD.targFragWtMt.frm$Group), 
+function(GRP.targFragWtMt.frm) {
+tmp.tbl <- with(GRP.targFragWtMt.frm, table(table(Patient)))
 tmp.frm <- data.frame(N_Patient=as.vector(tmp.tbl), Count=names(tmp.tbl))
 tmp.frm})
 
 
 # Order by Group, gender, age
-o.v <- with(DD.targFragWt.frm, order(GroupF, stageAtDx, Patient))
-DD.targFragWt.frm <- DD.targFragWt.frm[o.v,]
+o.v <- with(DD.targFragWtMt.frm, order(GroupF, stageAtDx, Patient))
+DD.targFragWtMt.frm <- DD.targFragWtMt.frm[o.v,]
 
-saveObj(paste0(DD, '.targFragWt.frm'), 'DD.targFragWt.frm')
+saveObj(paste0(DD, '.targFragWtMt.frm'), 'DD.targFragWtMt.frm')
 
-DT::datatable(DD.targFragWt.frm)
+DT::datatable(DD.targFragWtMt.frm)
 
 ```
+
 
 ### Look at fragSizeMedian, by Group
 
-```{r m1a-fragSizeMedian-by-Group, cache=T, cache.vars='',fig.height=5, fig.width=11,fir.cap="fragSizeMedian by Group"}
+```{r m1a-fragSizeMedian-by-Group, cache=T, cache.vars='',fig.height=5, fig.width=11,fig.cap="fragSizeMedian by Group"}
 
-fragSizeMedian.lst <- with(DD.targFragWt.frm, split(fragSizeMedian, Group))
+WtFragSizeMedian.lst <- with(DD.targFragWtMt.frm, split(WtFragSizeMedian, Group))
+names(WtFragSizeMedian.lst) <- paste0(names(WtFragSizeMedian.lst), '-Wt')
 
-boxplot(fragSizeMedian.lst)
+MtFragSizeMedian.lst <- with(DD.targFragWtMt.frm, split(MtFragSizeMedian, Group))
+names(MtFragSizeMedian.lst) <- paste0(names(MtFragSizeMedian.lst), '-Mt')
 
-```
-
-Look at within Vs between patient variability
-
-```{m1a-fragSizeMedian-by-Group-2, cache=T, cache.vars='',fig.height=5, fig.width=11,fir.cap="fragSizeMedian by Group - pch=Patient"}
-
-KellyColors.vec <- c(
-  "#222222", "#F3C300", "#875692", "#F38400", "#A1CAF1",
-  "#BE0032", "#C2B280", "#848482", "#008856", "#E68FAC", "#0067A5",
-  "#F99379", "#604E97", "#F6A600", "#B3446C", "#DCD300", "#882D17",
-  "#8DB600", "#654522", "#E25822", "#2B3D26"
-)
-col_vector <- KellyColors.vec
-
-
-fragSizeMedian.lst <- with(DD.targFragWt.frm, split(fragSizeMedian, Group))
-Patient.lst <- with(DD.targFragWt.frm, split(Patient, Group))
+WtMtFragSizeMedian.lst <- c(WtFragSizeMedian.lst, MtFragSizeMedian.lst)
+WtMtFragSizeMedian.lst <- WtMtFragSizeMedian.lst[order(names(WtMtFragSizeMedian.lst))]
 
 par(mar=par("mar")+c(2,0,0,0))
-for(GRP in names(fragSizeMedian.lst)){
- Grp.fragSizeMedian.vec <- fragSizeMedian.lst[[GRP]]
- Grp.Patient.vec <- Patient.lst[[GRP]]
- Grp.fragSizeMedian.lst <- split(Grp.fragSizeMedian.vec, Grp.Patient.vec)
+boxplot(WtMtFragSizeMedian.lst, log='y', las=2,
+ border=ifelse(grepl('Wt', names(WtMtFragSizeMedian.lst)), 'blue', 'red'))
 
- boxplot(Grp.fragSizeMedian.lst, las=2, col=0, border=0, outline=F)
- title(GRP)
- abline(v=1:length(Grp.fragSizeMedian.lst)-0.5, col='grey')
- for(JJ in 1:length(Grp.fragSizeMedian.lst))
- points(jitter(rep(JJ, length(Grp.fragSizeMedian.lst[[JJ]])), amount=.25),
-   Grp.fragSizeMedian.lst[[JJ]])
+title("fragSizeMedian by Group")
+
+```
+
+### Look at within Vs between patient variability - fragSizeMedian
+
+In the following figure, the different data points within
+each patient correspond to different loci or gene mutations.  See
+Figure \@ref(fig:m1a-mergeTargFragWtMt) above.
+
+```{r m1a-fragSizeMedian-by-Group-2, cache=T, cache.vars='',fig.height=5, fig.width=11,fig.cap="fragSizeMedian by Group"}
+
+WtFragSizeMedian.lst <- with(DD.targFragWtMt.frm, split(WtFragSizeMedian, Group))
+MtFragSizeMedian.lst <- with(DD.targFragWtMt.frm, split(MtFragSizeMedian, Group))
+Patient.lst <- with(DD.targFragWtMt.frm, split(Patient, Group))
+
+par(mar=par("mar")+c(2,0,0,0))
+
+for(GRP in names(WtFragSizeMedian.lst)){
+ Grp.WtFragSizeMedian.vec <- WtFragSizeMedian.lst[[GRP]]
+ Grp.MtFragSizeMedian.vec <- MtFragSizeMedian.lst[[GRP]]
+ Grp.Patient.vec <- Patient.lst[[GRP]]
+
+ Grp.WtFragSizeMedian.lst <- split(Grp.WtFragSizeMedian.vec, Grp.Patient.vec)
+ Grp.MtFragSizeMedian.lst <- split(Grp.MtFragSizeMedian.vec, Grp.Patient.vec)
+
+ boxplot(Grp.WtFragSizeMedian.lst, las=2, col=0, border=0, outline=F, ylim=c(145,195))
+ abline(v=1:length(Grp.WtFragSizeMedian.lst)-0.5, col='grey')
+ # Wt
+ for(JJ in 1:length(Grp.WtFragSizeMedian.lst))
+ points(jitter(rep(JJ, length(Grp.WtFragSizeMedian.lst[[JJ]])), amount=.25),
+        Grp.WtFragSizeMedian.lst[[JJ]], 
+        col='blue', pch=1:length(Grp.WtFragSizeMedian.lst[[JJ]]))
+ # Mt 
+ for(JJ in 1:length(Grp.MtFragSizeMedian.lst))
+ points(jitter(rep(JJ, length(Grp.MtFragSizeMedian.lst[[JJ]])), amount=.25),
+        Grp.MtFragSizeMedian.lst[[JJ]], 
+        col='red', pch=1:length(Grp.MtFragSizeMedian.lst[[JJ]]))
+
+ title(paste("Median Fragment Size -", GRP, "\nBlue=Wt,  Red=Mt,  Pch=Locus (within Patient)"))
 }
  
+
 ```
+
+
+### Look at within Vs between patient variability - fragSizeMean
+
+
+```{r m1a-fragSizeMean-by-Group-2, cache=T, cache.vars='',fig.height=5, fig.width=11,fig.cap="fragSizeMean by Group"}
+
+WtFragSizeMean.lst <- with(DD.targFragWtMt.frm, split(WtFragSizeMean, Group))
+MtFragSizeMean.lst <- with(DD.targFragWtMt.frm, split(MtFragSizeMean, Group))
+Patient.lst <- with(DD.targFragWtMt.frm, split(Patient, Group))
+
+par(mar=par("mar")+c(2,0,0,0))
+
+for(GRP in names(WtFragSizeMean.lst)){
+ Grp.WtFragSizeMean.vec <- WtFragSizeMean.lst[[GRP]]
+ Grp.MtFragSizeMean.vec <- MtFragSizeMean.lst[[GRP]]
+ Grp.Patient.vec <- Patient.lst[[GRP]]
+
+ Grp.WtFragSizeMean.lst <- split(Grp.WtFragSizeMean.vec, Grp.Patient.vec)
+ Grp.MtFragSizeMean.lst <- split(Grp.MtFragSizeMean.vec, Grp.Patient.vec)
+
+ boxplot(Grp.WtFragSizeMean.lst, las=2, col=0, border=0, outline=F, ylim=c(145,220))
+ abline(v=1:length(Grp.WtFragSizeMean.lst)-0.5, col='grey')
+ # Wt
+ for(JJ in 1:length(Grp.WtFragSizeMean.lst))
+ points(jitter(rep(JJ, length(Grp.WtFragSizeMean.lst[[JJ]])), amount=.25),
+        Grp.WtFragSizeMean.lst[[JJ]], 
+        col='blue', pch=1:length(Grp.WtFragSizeMean.lst[[JJ]]))
+ # Mt 
+ for(JJ in 1:length(Grp.MtFragSizeMean.lst))
+ points(jitter(rep(JJ, length(Grp.MtFragSizeMean.lst[[JJ]])), amount=.25),
+        Grp.MtFragSizeMean.lst[[JJ]], 
+        col='red', pch=1:length(Grp.MtFragSizeMean.lst[[JJ]]))
+
+ title(paste("Mean Fragment Size -", GRP, "\nBlue=Wt,  Red=Mt,  Pch=Locus (within Patient)"))
+}
+ 
+
+```
+
+
+
 
 # STOP HERE
 

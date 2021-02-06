@@ -180,7 +180,7 @@ TBD
 
 # Read in data
 
-```{r m1a-efsd-table-decr}
+```{r m1a-read-table-decr, include=F}
 DD <- 'Cristiano'
 
 # Sample meta data
@@ -192,6 +192,9 @@ DD.metaSheets.vec <- readxl::excel_sheets(DD_META_FILE)
 
 DD.metaSheetsHdr.vec <- do.call('c', lapply(DD.metaSheets.vec,
 function(SHEET) readxl::read_xlsx(DD_META_FILE, sheet=SHEET, n_max=1)[1,1]))
+```
+
+```{r m1a-read-table-decr-2}
 
 cat("Sheets found in", DD_META_FILE, '\n')
 names(DD.metaSheetsHdr.vec)
@@ -365,7 +368,7 @@ Note: We had to separate
 `r names(DD.metaSheetsHdr.vec)[4]` and
 `r names(DD.metaSheetsHdr.vec)[5]` to simplify reading in
 the data.  Here we read the two separately and then 
-recomine them.
+recombine them.
 
 ```{r m1a-readTargFragWt, eval=T, cache=T, cache.vars=c('DD.targFragWt.frm'),warning=F} 
 
@@ -406,6 +409,8 @@ DD.targFragWt.frm$GroupF <- factor(DD.targFragWt.frm$Group)
 
 ```
 
+<br/>
+
 ## read `r names(DD.metaSheetsHdr.vec)[5]`
 
 
@@ -445,7 +450,9 @@ DD.targFragMt.frm$GroupF <- factor(DD.targFragMt.frm$Group)
 
 ```
 
-Merge DD.targFragWt.frm and DD.targFragMt.frm
+<br/>
+
+## Merge Tables 3A and 3B
 
 
 ```{r m1a-mergeTargFragWtMt, eval=T, cache=T, cache.vars=c('DD.targFragWtMt.frm'),warning=F,fig.cap="Wild-type and Mutant Fragments Data",include=T} 
@@ -480,8 +487,11 @@ DT::datatable(DD.targFragWtMt.frm)
 
 ```
 
+<br/>
 
-### Look at fragSizeMedian, by Group
+# Examine the Fragment Size Data
+
+## Look at fragSizeMedian, by Group
 
 ```{r m1a-fragSizeMedian-by-Group, cache=T, cache.vars='',fig.height=5, fig.width=11,fig.cap="fragSizeMedian by Group"}
 
@@ -502,7 +512,9 @@ title("fragSizeMedian by Group")
 
 ```
 
-### Look at within Vs between patient variability - fragSizeMedian
+<br/>
+
+## Look at within Vs between patient variability - fragSizeMedian
 
 In the following figure, the different data points within
 each patient correspond to different loci or gene mutations.  See
@@ -544,7 +556,32 @@ for(GRP in names(WtFragSizeMedian.lst)){
 ```
 
 
-### Look at within Vs between patient variability - fragSizeMean
+<br/>
+
+## Look at fragSizeMean, by Group
+
+```{r m1a-fragSizeMean-by-Group, cache=T, cache.vars='',fig.height=5, fig.width=11,fig.cap="fragSizeMean by Group"}
+
+WtFragSizeMean.lst <- with(DD.targFragWtMt.frm, split(WtFragSizeMean, Group))
+names(WtFragSizeMean.lst) <- paste0(names(WtFragSizeMean.lst), '-Wt')
+
+MtFragSizeMean.lst <- with(DD.targFragWtMt.frm, split(MtFragSizeMean, Group))
+names(MtFragSizeMean.lst) <- paste0(names(MtFragSizeMean.lst), '-Mt')
+
+WtMtFragSizeMean.lst <- c(WtFragSizeMean.lst, MtFragSizeMean.lst)
+WtMtFragSizeMean.lst <- WtMtFragSizeMean.lst[order(names(WtMtFragSizeMean.lst))]
+
+par(mar=par("mar")+c(2,0,0,0))
+boxplot(WtMtFragSizeMean.lst, log='y', las=2,
+ border=ifelse(grepl('Wt', names(WtMtFragSizeMean.lst)), 'blue', 'red'))
+
+title("fragSizeMean by Group")
+
+```
+
+<br/>
+
+## Look at within Vs between patient variability - fragSizeMean
 
 
 ```{r m1a-fragSizeMean-by-Group-2, cache=T, cache.vars='',fig.height=5, fig.width=11,fig.cap="fragSizeMean by Group"}

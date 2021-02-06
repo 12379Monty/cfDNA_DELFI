@@ -180,11 +180,11 @@ TBD
 
 # Read in data
 
-```{r m1a-read-table-decr}
+```{r m1a-efsd-table-decr}
 DD <- 'Cristiano'
 
 # Sample meta data
-DD_META_FILE <- '../../Refs/Cristiano_supp/NIHMS1529141-supplement-2.xlsx'
+DD_META_FILE <- '../Refs/Cristiano_supp/NIHMS1529141-supplement-2.xlsx'
 if(!file.exists(DD_META_FILE))
 stop("Specify DD_META_FILE")
 
